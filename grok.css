@@ -58,38 +58,6 @@ h1 {
     margin-bottom: 0.5rem;
 }
 
-.nav-menu {
-    position: fixed;
-    top: 1rem;
-    right: 1rem;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 0.5rem;
-    border: 1px solid #f0f0e0; /* Single-line box */
-    border-radius: 5px; /* Rounded corners */
-    padding: 0.5rem; /* Space inside the box */
-    background-color: #333333; /* Subtle background to match theme */
-}
-
-.nav-menu a  {
-    color: #ffffff;
-    text-decoration: none;
-    font-size: 1.2rem;
-    transition: color 0.3s;
-}
-.nav-menu a:visited {
-    color: #ffffff; /* White on visited, matching normal state */
-}
-
-.nav-menu  {
-    color: #e6d700;
-}
-
-.nav-menu a:hover {
-    color: #fffa66;
-}
-
 .links-section, .blog-section {
     display: flex;
     flex-direction: column;
@@ -172,4 +140,22 @@ footer {
     margin-top: auto;
     padding: 1rem;
     color: #cccccc;
+    text-align: center;
+}
+
+footer p {
+    margin: 0.15rem 0;
+}
+
+footer a {
+    color: #fff200;
+    text-decoration: underline;
+}
+
+footer a:visited {
+    color: #e6d700;
+}
+
+footer a:hover {
+    color: #fffa66;
 }
