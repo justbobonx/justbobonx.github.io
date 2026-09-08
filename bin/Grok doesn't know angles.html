@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Full Screen Canvas with Angle Functions</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="myCanvas"></canvas>
+    <script>
+        // Angle and position utility functions
+        function angles_direction(x1, y1, x2, y2) {
+            // Returns angle in radians from (x1,y1) to (x2,y2), where 0 is up (-Y) and clockwise is positive
+            const dx = x2 - x1;
+            const dy = y2 - y1;
+            let angle = Math.atan2(dy, dx); // atan2 gives angle from +X (right), adjust to -Y (up) as 0
+            angle = Math.PI / 2 - angle; // Rotate 90° counterclockwise so -Y is 0
+            if (angle < 0) angle += 2 * Math.PI; // Normalize to [0, 2π)
+            return angle;
+        }
+
+        function angles_distance(x1, y1, x2, y2) {
+            // Returns Euclidean distance between two points
+            const dx = x2 - x1;
+            const dy = y2 - y1;
+            return Math.sqrt(dx * dx + dy * dy);
+        }
+
+        function angles_x(x, y, length, angle) {
+            // Returns x-coordinate of point at given length and angle from (x,y)
+            // Angle is in radians, 0 is up (-Y), clockwise positive
+            return x + length * Math.sin(angle); // sin for x because 0° is up
+        }
+
+        function angles_y(x, y, length, angle) {
+            // Returns y-coordinate of point at given length and angle from (x,y)
+            // Angle is in radians, 0 is up (-Y), clockwise positive
+            return y + length * Math.cos(angle); // cos for y, positive angle increases y downward
+        }
+
+        function angles_diff(fromAng, toAng) {
+            // Returns shortest angle from fromAng to toAng in radians
+            // Positive for clockwise, negative for counterclockwise
+            let diff = toAng - fromAng;
+            while (diff > Math.PI) diff -= 2 * Math.PI;
+            while (diff < -Math.PI) diff += 2 * Math.PI;
+            return diff;
+        }
+
+        function angles_torad(degrees) {
+            // Converts degrees to radians
+            return degrees * Math.PI / 180;
+        }
+
+        function angles_todeg(radians) {
+            // Converts radians to degrees
+            return radians * 180 / Math.PI;
+        }
+
+        // Canvas drawing code using the functions
+        const canvas = document.getElementById('myCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Set canvas size to match window
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        function draw() {
+            // Set grey background
+            ctx.fillStyle = '#808080';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Center point
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            const lineLength = Math.min(canvas.width, canvas.height) * 0.4;
+
+            // Set shadow properties
+            ctx.shadowOffsetX = 1;
+            ctx.shadowOffsetY = 1;
+            ctx.shadowBlur = 0;
+            ctx.shadowColor = 'rgba(0, 0, 0, 1)';
+
+            // Define main axes angles (0° is -Y, clockwise positive)
+            const angles = [
+                { label: '-Y (0°, 0π)', dir: 'North', angle: angles_torad(0) },
+                { label: '+X (90°, π/2)', dir: 'East', angle: angles_torad(90) },
+                { label: '+Y (180°, π)', dir: 'South', angle: angles_torad(180) },
+                { label: '-X (270°, 3/2π)', dir: 'West', angle: angles_torad(270) },
+                { label: '45° (π/4)', dir: ['clockwise', 'right turn'], angle: angles_torad(45) },
+                { label: '-45° (-π/4)', dir: ['counterclockwise', 'left turn'], angle: angles_torad(-45) }
+            ];
+
+            // Draw lines
+            ctx.beginPath();
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 2;
+            angles.forEach(a => {
+                const x2 = angles_x(centerX, centerY, lineLength, a.angle);
+                const y2 = angles_y(centerX, centerY, lineLength, a.angle);
+                ctx.moveTo(centerX, centerY);
+                ctx.lineTo(x2, y2);
+            });
+            ctx.stroke();
+
+            // Draw circle
+            const circleRadius = lineLength * 0.8;
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, circleRadius, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Set text properties
+            ctx.font = '16px Arial';
+            ctx.fillStyle = 'white';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            const lineHeight = 18;
+
+            // Draw labels
+            angles.forEach(a => {
+                const x2 = angles_x(centerX, centerY, lineLength, a.angle);
+                const y2 = angles_y(centerX, centerY, lineLength, a.angle);
+                const dir = angles_direction(centerX, centerY, x2, y2);
+                let textX = x2;
+                let textY = y2;
+                const offset = 40;
+
+                // Adjust text position based on direction
+                if (Math.abs(angles_diff(dir, angles_torad(0))) < Math.PI / 4) {
+                    textY -= lineHeight * (Array.isArray(a.dir) ? 3 : 2); // Up
+                } else if (Math.abs(angles_diff(dir, angles_torad(180))) < Math.PI / 4) {
+                    textY += lineHeight * (Array.isArray(a.dir) ? 3 : 2); // Down
+                } else if (angles_diff(dir, angles_torad(90)) < Math.PI / 2) {
+                    textX += offset; // Right
+                } else {
+                    textX -= offset; // Left
+                }
+
+                ctx.fillText(a.label, textX, textY - lineHeight);
+                if (Array.isArray(a.dir)) {
+                    ctx.fillText(a.dir[0], textX, textY);
+                    ctx.fillText(a.dir[1], textX, textY + lineHeight);
+                } else {
+                    ctx.fillText(a.dir, textX, textY);
+                }
+            });
+
+            // Reset shadow
+            ctx.shadowOffsetX = 0;
+            ctx.shadowOffsetY = 0;
+        }
+
+        // Initial draw
+        draw();
+
+        // Redraw on resize
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            draw();
+        });
+    </script>
+</body>
+</html>

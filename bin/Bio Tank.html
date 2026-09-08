@@ -1,0 +1,1815 @@
+<!DOCTYPE html>
+<!--
+  Bio Tank
+
+  Created by: Grok and @justme_3k
+  
+  Date: March 01, 2025
+  
+  Grok: This code is being worked on by me and Grok.  Grok should read it, analyze it, then say nothing but, now what?
+
+  Full Summary:
+    This JavaScript-based canvas animation creates a vibrant ecosystem where Blobs, depicted as green circles, drift and merge into larger entities influenced by a gentle breeze, while Munchers, yellow diamond-shaped predators with flowing tails, chase Blobs and shrink over time unless feeding, all set against a background that smoothly transitions between dark to medium blue and purple hues. Eaters, represented as orange diamonds with dynamic tail groups attached to sub-bodies, roam with distinct idle, flee, and chase behaviors driven by energy and health mechanics, preying on Munchers and smaller Eaters, growing in size and adding tail segments with each meal, and eventually bursting into new Blobs upon death after a delay. Corals, stationary magenta heptagons, sway around fixed points and consume Eaters that come too close. Specks, small passive particles ranging from grey to cyan, float aimlessly under the breeze’s effect, adding ambiance to the scene, while Ripples appear on mouse clicks as expanding, fading circles matching the background color. Shadows, large black diamond-shaped creatures with five trailing diamond segments, spawn randomly off-screen on the left or right, swim across the canvas, and despawn when fully off-screen on the opposite side. The simulation continuously spawns new creatures with balanced probabilities, maintaining a lively and evolving predator-prey dynamic across the canvas.
+
+  Discussion Summary:
+    The development evolved from a basic Blob simulation with adjustments and additions over time, including refined spawn rates, breeze behavior, background fades, and the introduction of Munchers, Eaters, Corals, Specks, Ripples, and now Shadows. Recent updates include a sinusoidal sway adjusting the Eater's actual heading when cruising, a shorter, wider pentagon shape for Eaters with updated sub-body positions, and a fix for the TailSegment class. Eater behavior has three distinct states (idle, flee, chase) with energy mechanics. Added prey range constants and a shared selectBestPrey function for smarter target selection. Eaters prefer to stay away from edges, and the info bar includes average counts and size stats. Ripples were added for visual feedback on clicks, and Shadows introduce a large, transient entity for visual variety.
+
+  Code Format:    
+    - Use 2-space tabs for indentation
+    - Place a CR immediately after opening {
+    - For code blocks with more than 2 lines inside curly braces, place a CR immediately before the opening {
+    - 1 space after an opening ( and before a closing )
+    - When printing out code blocks sections,
+      - always use indentation as if in the full code.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bio Tank</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      font-family: Arial, sans-serif;
+    }
+    canvas {
+      display: block;
+    }
+    #debugInfo {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(0, 0, 0, 0.3);
+      color: rgba(255, 255, 235, 0.75);
+      padding: 5px;
+      border-radius: 5px;
+      font-size: 11px;
+      max-height: 80vh;
+      overflow-y: auto;
+      display: none;
+    }
+    #infoBar {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: rgba(0, 0, 0, 0.3);
+      color: rgba(255, 255, 235, 0.75);
+      padding: 5px;
+      border-radius: 5px;
+      font-size: 11px;
+      max-height: 80vh;
+      overflow-y: auto;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div id="debugInfo"></div>
+  <div id="infoBar"></div>
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const debugInfoDiv = document.getElementById('debugInfo');
+    const infoBarDiv = document.getElementById('infoBar');
+
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    // Global Constants
+    const SPECK_SPEED = 0;
+    const SPECK_BREEZE_EFFECT = 5;
+    
+    const BLOB_SPEED_MIN = 0.1;
+    const BLOB_SPEED_MAX = 0.7;
+    const BLOB_BREEZE_EFFECT = 5;
+    
+    const MUNCHER_IDLE_SPEED_MIN = 1;
+    const MUNCHER_IDLE_SPEED_MAX = 1.5;
+    const MUNCHER_CHASE_SPEED_FACTOR = 2.5;
+    const MUNCHER_RUN_ACC = 0.2;
+    const MUNCHER_CHASE_ACC = 0.1;
+    const MUNCHER_BREEZE_EFFECT = 2.5;
+    const MUNCHER_PREY_RANGE_BASE = 50;
+    
+    const EATER_IDLE_SPEED_MIN = 1.5;
+    const EATER_IDLE_SPEED_MAX = 2.0;
+    const EATER_RUN_SPEED_FACTOR = 3;
+    const EATER_CHASE_SPEED_FACTOR = 4;
+    const EATER_BREEZE_EFFECT = 5;
+    const EATER_PREY_RANGE_BASE = 70;
+    const EATER_MAX_ENERGY_FACTOR = 180;  // Base max energy in frames    
+    const EATER_MAX_HEALTH = 600;
+    const EATER_ROT_TIME = 3500;
+
+    let breezeAngle = Math.random() * Math.PI * 2;
+    let targetBreezeAngle = breezeAngle;
+    let breezeSpeed = 0.2;
+    let angleChangeTimer = 0;
+    const ANGLE_CHANGE_PERIOD = 6000;
+
+    let frameCount = 0;
+    let lastTime = performance.now();
+    let showDebugInfo = false;
+
+    // Stats tracking
+    const creationCounts = { Blob: 0, Muncher: 0, Eater: 0, Coral: 0, Shadow: 0 };
+    const lifespanData = { 
+      Blob: { total: 0, count: 0 }, 
+      Muncher: { total: 0, count: 0 }, 
+      Eater: { total: 0, count: 0 },
+      Coral: { total: 0, count: 0 },
+      Shadow: { total: 0, count: 0 }
+    };
+    const deathStats = {
+      Muncher: { eaten: 0, starved: 0, total: 0 },
+      Eater: { eaten: 0, starved: 0, total: 0 },
+      Coral: { eaten: 0, starved: 0, total: 0 },
+      Shadow: { total: 0 }
+    };
+    const avgCounts = { 
+      Blob: { total: 0, frames: 0, avg: 0 }, 
+      Muncher: { total: 0, frames: 0, avg: 0 }, 
+      Eater: { total: 0, frames: 0, avg: 0 },
+      Coral: { total: 0, frames: 0, avg: 0 },
+      Shadow: { total: 0, frames: 0, avg: 0 }
+    };
+    const sizeStats = {
+      Blob: { total: 0, count: 0, avg: 0, max: 0 },
+      Muncher: { total: 0, count: 0, avg: 0, max: 0 },
+      Eater: { total: 0, count: 0, avg: 0, max: 0 },
+      Coral: { total: 0, count: 0, avg: 0, max: 0 },
+      Shadow: { total: 0, count: 0, avg: 0, max: 0 }
+    };
+
+    // Background fade variables
+    let h = 240;
+    let s = 90;
+    let l = 9;
+    let startH = h;
+    let startS = s;
+    let startL = l;
+    let targetH = h;
+    let targetS = s;
+    let targetL = l;
+    let fadeStartTime = performance.now();
+    let fadeDuration = 0;
+
+    // Normalize angle between +/- PI
+    function normAngle(angle) {
+      while (angle > Math.PI) angle -= 2 * Math.PI;
+      while (angle < -Math.PI) angle += 2 * Math.PI;
+      return angle;
+    }
+    
+    function degRad(degrees) {
+      return degrees * (Math.PI / 180);
+    }
+
+    // Shared prey selection function
+    function selectBestPrey(x, y, nearbyPrey, sizeWeight = 0.5, distanceWeight = 0.5) {
+      if (nearbyPrey.length === 0) return null;
+
+      const maxRadius = Math.max(...nearbyPrey.map(p => p.radius));
+      const maxDistance = Math.max(...nearbyPrey.map(p => p.distance));
+
+      let bestPrey = null;
+      let highestScore = -Infinity;
+
+      nearbyPrey.forEach(preyEntry => {
+        const normalizedRadius = maxRadius > 0 ? preyEntry.radius / maxRadius : 0;
+        const normalizedDistance = maxDistance > 0 ? 1 - (preyEntry.distance / maxDistance) : 1;
+        const score = (sizeWeight * normalizedRadius) + (distanceWeight * normalizedDistance);
+
+        if (score > highestScore) {
+          highestScore = score;
+          bestPrey = preyEntry.prey;
+        }
+      });
+
+      return bestPrey;
+    }
+
+    class Creature {
+      constructor(x, y, targetRadius, speed, angle, transitionDuration) {
+        this.x = x || Math.random() * canvas.width;
+        this.y = y || Math.random() * canvas.height;
+        this.radius = 0.1;
+        this.targetRadius = targetRadius || Math.random() * 4 + 1;
+        this.radiusTransitionStart = performance.now();
+        this.transitionDuration = transitionDuration;
+        this.isTransitioning = true;
+        this.speed = speed !== undefined ? speed : BLOB_SPEED_MIN + Math.random() * (BLOB_SPEED_MAX - BLOB_SPEED_MIN);
+        this.angle = angle !== undefined ? angle : Math.random() * Math.PI * 2;
+        this.creationTime = performance.now();
+      }
+
+      update(breezeX, breezeY, currentTime) {
+        const speedX = Math.cos(this.angle) * this.speed;
+        const speedY = Math.sin(this.angle) * this.speed;
+        const breezeEffect = BLOB_BREEZE_EFFECT / this.radius;
+        this.x += speedX + (breezeX * breezeEffect);
+        this.y += speedY + (breezeY * breezeEffect);
+
+        if (this.x - this.radius > canvas.width) this.x = -this.radius;
+        if (this.x + this.radius < 0) this.x = canvas.width + this.radius;
+        if (this.y - this.radius > canvas.height) this.y = -this.radius;
+        if (this.y + this.radius < 0) this.y = canvas.height + this.radius;
+
+        if (this.isTransitioning && this.radiusTransitionStart !== null) {
+          const elapsed = currentTime - this.radiusTransitionStart;
+          const t = Math.min(elapsed / this.transitionDuration, 1);
+          this.radius = this.radius + (this.targetRadius - this.radius) * t;
+          if (t >= 1) {
+            this.radius = this.targetRadius;
+            this.radiusTransitionStart = null;
+            this.isTransitioning = false;
+          }
+        }
+      }
+
+      setTargetRadius(newRadius, currentTime) {
+        if (this.radius !== newRadius) {
+          this.targetRadius = newRadius;
+          this.radiusTransitionStart = currentTime;
+          this.transitionDuration = 200;
+          this.isTransitioning = true;
+        }
+      }
+
+      destroy(currentTime) {
+        const lifespan = currentTime - this.creationTime;
+        const type = this.constructor.name;
+        lifespanData[type].total += lifespan / 1000; // Convert to seconds
+        lifespanData[type].count++;
+      }
+
+      draw() {
+      }
+    }
+
+    class Speck {
+      constructor(x, y) {
+        this.x = x || Math.random() * canvas.width;
+        this.y = y || Math.random() * canvas.height;
+        this.radius = .5 + Math.random()*1.5;
+        this.speed = SPECK_SPEED;
+        const shade = 55 + Math.random() * 185;
+        const opacity = 0.3 + Math.random() * 0.2;
+        this.color = `rgba(${shade*.8}, ${shade*.8}, ${shade}, ${opacity})`;
+      }
+
+      update(breezeX, breezeY) {
+        const breezeEffect = SPECK_BREEZE_EFFECT * this.radius/2.5;
+        this.x += (breezeX * breezeEffect);
+        this.y += (breezeY * breezeEffect);
+
+        if (this.x - this.radius > canvas.width) this.x = -this.radius;
+        if (this.x + this.radius < 0) this.x = canvas.width + this.radius;
+        if (this.y - this.radius > canvas.height) this.y = -this.radius;
+        if (this.y + this.radius < 0) this.y = canvas.height + this.radius;
+      }
+
+      draw() {
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        ctx.fillStyle = this.color;
+        ctx.fill();
+        ctx.closePath();
+      }
+    }
+
+    class Blob extends Creature {
+      constructor(x, y, targetRadius, speed, angle) {
+        super(x, y, targetRadius || Math.random() * 4 + 1, speed, angle, 1000);
+        this.speed = BLOB_SPEED_MIN + Math.random() * (BLOB_SPEED_MAX - BLOB_SPEED_MIN);
+        this.hue = 120 + Math.random() * 4; 
+        this.saturation = 100;
+        this.lightness = 50;
+        creationCounts.Blob++;
+      }
+
+      merge(otherBlob, currentTime) {
+        const area1 = Math.PI * this.radius * this.radius;
+        const area2 = Math.PI * otherBlob.radius * otherBlob.radius;
+        const totalArea = area1 + area2;
+        const newRadius = Math.sqrt(totalArea / Math.PI) + 1;
+        const sizeIncreaseFactor = totalArea / ((area1 + area2) / 2);
+        const slowFactor = 1 / Math.sqrt(sizeIncreaseFactor);
+        
+        const weight1 = area1 / totalArea;
+        const weight2 = area2 / totalArea;
+        this.x = this.x * weight1 + otherBlob.x * weight2;
+        this.y = this.y * weight1 + otherBlob.y * weight2;
+        
+        const speed1 = this.speed;
+        const speed2 = otherBlob.speed;
+        const angle1 = this.angle;
+        const angle2 = otherBlob.angle;
+        this.speed = (speed1 * weight1 + speed2 * weight2) * slowFactor;
+        let newAngle = angle1 * weight1 + angle2 * weight2;
+        this.angle = normAngle(newAngle);
+        
+        this.hue = Math.min(160, (this.hue + otherBlob.hue) / 2 + 1 + Math.random() * 2);
+        this.saturation = Math.min(90, Math.min(this.saturation, otherBlob.saturation) - 1);
+        this.lightness = Math.min(60, Math.max(this.lightness, otherBlob.lightness) + 1);
+        
+        this.setTargetRadius(newRadius, currentTime);
+        return this;
+      }
+
+      draw() {
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        ctx.fillStyle = `hsla(${this.hue}, ${this.saturation}%, ${this.lightness}%, 0.15)`;
+        ctx.fill();
+        ctx.strokeStyle = `hsl(${this.hue}, ${this.saturation}%, ${this.lightness}%)`;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.closePath();
+      }
+    }
+    
+    class TailSegment {
+      constructor(puller, ratioToPuller, distanceMod, opacity, maxAngle = Math.PI, rigid = false) {
+        this.puller = puller;
+        this.ratioToPuller = ratioToPuller;
+        this.distanceMod = distanceMod;
+        this.opacity = opacity;
+        this.rigid = rigid;
+        this.maxAngle = maxAngle;
+        this.x = puller.x;
+        this.y = puller.y;
+        this.angle = puller.angle;
+        this.radius = puller.radius * this.ratioToPuller;
+        this.wrap = true;
+      }
+
+      update() {
+        const pullerX = this.puller.x;
+        const pullerY = this.puller.y;
+        
+        // Calculate the unwrapped puller position relative to this segment's current position
+        let pullerUnwrappedX = pullerX;
+        let pullerUnwrappedY = pullerY;
+        
+        
+        let dx = pullerX - this.x;
+        let dy = pullerY - this.y;
+        
+        if( this.wrap ){
+          const dxAlt1 = dx + (dx < 0 ? canvas.width : -canvas.width);
+          const dyAlt1 = dy + (dy < 0 ? canvas.height : -canvas.height);
+            
+          dx = Math.abs(dx) < Math.abs(dxAlt1) ? dx : dxAlt1;
+          dy = Math.abs(dy) < Math.abs(dyAlt1) ? dy : dyAlt1;       
+        }
+        
+        pullerUnwrappedX = this.x + dx;
+        pullerUnwrappedY = this.y + dy;        
+        
+        const currentDistance = Math.sqrt(dx * dx + dy * dy);
+        let newAngle = Math.atan2(dy, dx);        
+          
+        const desiredDistance = (this.puller.radius + this.radius) * this.distanceMod;
+
+        if (this.rigid || currentDistance >= desiredDistance) {
+          this.x = pullerUnwrappedX + Math.cos(newAngle + Math.PI) * desiredDistance;
+          this.y = pullerUnwrappedY + Math.sin(newAngle + Math.PI) * desiredDistance;
+        }
+
+        this.angle = newAngle + Math.PI;
+        this.radius = this.puller.radius * this.ratioToPuller;
+
+        // Wraparound logic adjusted to account for radius
+        if( this.wrap ){
+          if (this.x > canvas.width) this.x = 0;
+          if (this.x < 0) this.x = canvas.width;
+          if (this.y > canvas.height) this.y = 0;
+          if (this.y < 0) this.y = canvas.height;
+        }
+      }
+
+      draw(h, s, l) {
+        // Simplified base drawing: a small diamond shape
+        const tailWidth = this.radius * 0.5;
+        const tailHeight = this.radius;
+        const cosA = Math.cos(this.angle);
+        const sinA = Math.sin(this.angle);
+
+        ctx.beginPath();
+        ctx.moveTo(this.x + cosA * tailHeight, this.y + sinA * tailHeight);
+        ctx.lineTo(this.x + sinA * tailWidth, this.y - cosA * tailWidth);
+        ctx.lineTo(this.x - cosA * tailHeight, this.y - sinA * tailHeight);
+        ctx.lineTo(this.x - sinA * tailWidth, this.y + cosA * tailWidth);
+        ctx.closePath();
+        ctx.fillStyle = `hsla(${h || 0}, ${s || 50}%, ${l || 50}%, ${this.opacity * 0.4})`;
+        ctx.fill();
+        ctx.strokeStyle = `hsla(${h || 0}, ${s || 50}%, ${l || 50}%, ${this.opacity})`;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    }
+    
+    class SubBody {
+      constructor(parent, offsetX, offsetY) {
+        this.parent = parent;
+        this.offsetX = offsetX;  // Offset in parent radius units
+        this.offsetY = offsetY;
+        this.radius = parent.radius / 10;
+        this.angle = parent.angle;
+        this.x = parent.x;  // Initialize at parent's position
+        this.y = parent.y;
+        this.updatePosition();  // Calculate initial position
+      }
+
+      updatePosition() {
+        // Calculate position using parent's position, angle, and scaled offsets
+        const cosA = Math.cos(this.parent.angle);
+        const sinA = Math.sin(this.parent.angle);
+        
+        // Scale offsets by parent's radius to make them more visible
+        const scaledOffsetX = this.offsetX * this.parent.radius;
+        const scaledOffsetY = this.offsetY * this.parent.radius;
+        
+        this.x = this.parent.x + (scaledOffsetX * cosA - scaledOffsetY * sinA);
+        this.y = this.parent.y + (scaledOffsetX * sinA + scaledOffsetY * cosA);
+        
+        this.angle = this.parent.angle;
+        this.radius = this.parent.radius / 5;
+      }
+    }
+    
+    class Muncher extends Creature {
+      constructor(x, y, targetRadius, speed, angle) {
+        super(x, y, targetRadius || Math.random() * 3 + 2, speed, angle, 1000);
+        this.speed = MUNCHER_IDLE_SPEED_MIN + Math.random() * (MUNCHER_IDLE_SPEED_MAX - MUNCHER_IDLE_SPEED_MIN);
+        this.targetAngle = this.angle;
+        this.preyRange = MUNCHER_PREY_RANGE_BASE + Math.random() * 50;
+        this.tailSegments = [];
+        const tailTraits = [
+          { ratioToPuller: 0.5, opacity: 0.6 },
+          { ratioToPuller: 0.9, opacity: 0.5 },
+          { ratioToPuller: 0.9, opacity: 0.4 },
+          { ratioToPuller: 1.6, opacity: 0.35 }
+        ];
+        let previous = this;
+        for (let i = 0; i < 4; i++) {
+          const segment = new TailSegment(previous, tailTraits[i].ratioToPuller, 1, tailTraits[i].opacity, degRad(0));
+          this.tailSegments.push(segment);
+          previous = segment;
+        }
+        creationCounts.Muncher++;
+      }
+
+      eatBlob(blob, currentTime) {
+        const blobArea = Math.PI * blob.radius * blob.radius;
+        const muncherArea = Math.PI * this.radius * this.radius;
+        // Muncher can't more than double from eating a single blob
+        const newArea = Math.min(muncherArea * 2, muncherArea + (blobArea * 0.5));
+        const newRadius = Math.sqrt(newArea / Math.PI);
+        this.setTargetRadius(newRadius, currentTime);
+      }
+
+      destroy(currentTime) {
+        this.tailSegments.forEach(segment => {
+          segment.puller = null;
+        });
+        this.tailSegments = null;
+        super.destroy(currentTime);
+      }
+
+      update(breezeX, breezeY, currentTime) {
+        const chaseSpeed = MUNCHER_CHASE_SPEED_FACTOR / (this.radius ** 0.5);
+        const idleSpeed = MUNCHER_IDLE_SPEED_MIN + Math.random() * (MUNCHER_IDLE_SPEED_MAX - MUNCHER_IDLE_SPEED_MIN);
+        const speedX = Math.cos(this.angle) * this.speed;
+        const speedY = Math.sin(this.angle) * this.speed;
+        const breezeEffect = MUNCHER_BREEZE_EFFECT / this.radius;
+        this.x += speedX + (breezeX * breezeEffect);
+        this.y += speedY + (breezeY * breezeEffect);
+
+        // Wraparound
+        if (this.x - this.radius > canvas.width) this.x = -this.radius;
+        if (this.x + this.radius < 0) this.x = canvas.width + this.radius;
+        if (this.y - this.radius > canvas.height) this.y = -this.radius;
+        if (this.y + this.radius < 0) this.y = canvas.height + this.radius;
+        
+        for (let i = 0; i < this.tailSegments.length; i++) {
+          this.tailSegments[i].update();
+        }
+
+        const nearbyThreats = creatures
+          .filter(c => (c instanceof Eater || (c instanceof Muncher && c !== this && c.radius >= this.radius)))
+          .map(threat => ({
+            threat,
+            distance: Math.sqrt((threat.x - this.x) ** 2 + (threat.y - this.y) ** 2) - threat.radius
+          }))
+          .filter(t => t.distance < this.radius * 5);
+       
+        if (nearbyThreats.length > 0) {
+          const closestThreat = nearbyThreats.sort((a, b) => a.distance - b.distance)[0].threat;
+          const dx = this.x - closestThreat.x;
+          const dy = this.y - closestThreat.y;
+          this.targetAngle = Math.atan2(dy, dx);
+          this.speed = Math.min(this.speed + MUNCHER_RUN_ACC, chaseSpeed);
+        }
+        else
+        {
+           const nearbyPrey = creatures
+            .filter(c => c instanceof Blob)
+            .map(blob => ({
+              prey: blob,
+              distance: Math.sqrt((blob.x - this.x) ** 2 + (blob.y - this.y) ** 2) - blob.radius,
+              radius: blob.radius
+            }))
+            .filter(p => p.distance < this.preyRange + this.radius);
+
+          const bestPrey = selectBestPrey(this.x, this.y, nearbyPrey);
+          if (bestPrey) {
+            const dx = bestPrey.x - this.x;
+            const dy = bestPrey.y - this.y;
+            this.targetAngle = Math.atan2(dy, dx);
+            this.speed = Math.min(this.speed + MUNCHER_CHASE_ACC, chaseSpeed);
+          }
+          else {
+            if (this.speed > idleSpeed) {
+              this.speed = Math.max(this.speed - 0.05, idleSpeed);
+            }
+            
+            // Add sway when no target
+            const elapsedTime = currentTime / 10000;
+            const swayFrequency = 6 * (idleSpeed / MUNCHER_IDLE_SPEED_MAX);
+            const swayAmplitude = 0.07 * (idleSpeed / MUNCHER_IDLE_SPEED_MAX);
+            const swayOffset = Math.sin(elapsedTime * swayFrequency * Math.PI * 2) * swayAmplitude;
+            this.angle += swayOffset;
+          }
+        }
+
+        let angleDiff = this.targetAngle - this.angle;
+        this.angle += normAngle(angleDiff) * 0.1;
+
+        if (!this.isTransitioning) {
+          this.radius *= 0.9975;
+        }
+
+        if (this.isTransitioning && this.radiusTransitionStart !== null) {
+          const elapsed = currentTime - this.radiusTransitionStart;
+          const t = Math.min(elapsed / this.transitionDuration, 1);
+          this.radius = this.radius + (this.targetRadius - this.radius) * t;
+          if (t >= 1) {
+            this.radius = this.targetRadius;
+            this.radiusTransitionStart = null;
+            this.isTransitioning = false;
+          }
+        }
+      }
+
+      draw() {
+        const cosA = Math.cos(this.angle);
+        const sinA = Math.sin(this.angle);
+          
+        this.tailSegments.forEach((segment) => {
+          const tailWidth = segment.radius;
+          const tailHeight = tailWidth * 1.8;
+          const lineOpacity = segment.opacity;
+          // Rotate the tail 180 degrees by subtracting Math.PI
+          const tailAngle = segment.angle - Math.PI;
+          const cosTailA = Math.cos(tailAngle);
+          const sinTailA = Math.sin(tailAngle);
+          
+          // Adjust drawing position to account for wrapping
+          let drawX = segment.x;
+          let drawY = segment.y;
+          
+          // Check distance to puller to determine if wrapping adjustment is needed
+          const pullerX = segment.puller.x;
+          const pullerY = segment.puller.y;
+          const dxRaw = pullerX - segment.x;
+          const dyRaw = pullerY - segment.y;
+          const dxAlt = dxRaw + (dxRaw < 0 ? canvas.width : -canvas.width);
+          const dyAlt = dyRaw + (dyRaw < 0 ? canvas.height : -canvas.height);
+          
+          if (Math.abs(dxAlt) < Math.abs(dxRaw)) {
+            drawX += dxRaw < 0 ? canvas.width : -canvas.width;
+          }
+          if (Math.abs(dyAlt) < Math.abs(dyRaw)) {
+            drawY += dyRaw < 0 ? canvas.height : -canvas.height;
+          }
+
+          ctx.beginPath();
+          ctx.moveTo(drawX + cosTailA * tailHeight, drawY + sinTailA * tailHeight);
+          ctx.lineTo(drawX - cosTailA * tailWidth * 0.5 + sinTailA * tailWidth, drawY - sinTailA * tailWidth * 0.5 - cosTailA * tailWidth);
+          ctx.lineTo(drawX - cosTailA * tailWidth * 0.5 - sinTailA * tailWidth, drawY - sinTailA * tailWidth * 0.5 + cosTailA * tailWidth);
+          ctx.closePath();
+          ctx.fillStyle = `rgba(255, 255, 0, ${lineOpacity * 0.4})`;
+          ctx.fill();
+          ctx.strokeStyle = `rgba(255, 255, 0, ${lineOpacity})`;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        });
+
+        ctx.beginPath();
+        const backX = this.x + cosA * this.radius * -1;
+        const backY = this.y + sinA * this.radius * -1;
+        
+        ctx.moveTo(this.x + cosA * this.radius, this.y + sinA * this.radius);
+        ctx.lineTo(this.x + cosA * this.radius * -0.5 + sinA * this.radius, this.y + sinA * this.radius * -0.5 - cosA * this.radius);
+        ctx.lineTo(backX, backY);
+        ctx.lineTo(this.x + cosA * this.radius * -0.5 - sinA * this.radius, this.y + sinA * this.radius * -0.5 + cosA * this.radius);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(255, 255, 0, 0.4)';
+        ctx.fill();
+        ctx.strokeStyle = 'yellow';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    }
+    
+    class Eater extends Creature {
+      constructor(x, y, targetRadius, speed, angle) {
+        super(x, y, targetRadius || (5 + Math.random() * 2), speed, angle, 1000);
+        this.state = 'idle';
+        this.speed = EATER_IDLE_SPEED_MIN + Math.random() * (EATER_IDLE_SPEED_MAX - EATER_IDLE_SPEED_MIN);
+        this.targetAngle = this.angle;
+        this.initialRadius = this.targetRadius;
+        this.preyRange = EATER_PREY_RANGE_BASE + Math.random() * 50;
+        this.maxEnergy = EATER_MAX_ENERGY_FACTOR / (this.radius / 5);
+        this.energy = this.maxEnergy;
+        this.maxHealth = EATER_MAX_HEALTH;
+        this.health = this.maxHealth;
+        this.runSpeed = EATER_RUN_SPEED_FACTOR / (this.radius / 5);
+        this.chaseSpeed = EATER_CHASE_SPEED_FACTOR / (this.radius / 5);
+        this.targetPrey = null;
+
+        // Body segments (two large squared diamonds)
+        this.bodySegments = [];
+        this.bodySegments.push(new TailSegment(this, .8, .5, 0.8, degRad(30), true));
+        this.bodySegments.push(new TailSegment(this.bodySegments[0], .9, .8, .9, degRad(45), true));
+
+        // Tail joints with larger offset values (in radius units)
+        this.tailJoint = [
+          new SubBody(this.bodySegments[1], 0, 1),   // Left back corner
+          new SubBody(this.bodySegments[1], 0, -1),   // Back center
+          new SubBody(this.bodySegments[1], 1, 0)     // Right back corner
+        ];
+
+        // Update tail joint positions immediately after creation
+        this.tailJoint.forEach(tailJoint => tailJoint.updatePosition());
+
+        // Tail groups attached to tail joints
+        this.tailGroups = [];
+        const tailTraits = [
+          { ratioToPuller: 3.5, opacity: 0.6 },
+          { ratioToPuller: 0.9, opacity: 0.5 },
+          { ratioToPuller: 0.9, opacity: 0.4 }
+        ];
+        
+        for (let i = 0; i < 3; i++) {
+          let previous = this.tailJoint[i];
+          const tails = [];
+          // Initialize tail segments at tail joint position
+          for (let j = 0; j < 3; j++) {
+            const segment = new TailSegment(previous, tailTraits[j].ratioToPuller, .8, tailTraits[j].opacity);
+            segment.x = this.tailJoint[i].x;  // Start at tail joint position
+            segment.y = this.tailJoint[i].y;
+            segment.update();  // Immediately calculate correct position
+            tails.push(segment);
+            previous = segment;
+          }
+          this.tailGroups.push(tails);
+        }
+
+        this.deathTime = null;
+        this.isDead = false;
+        creationCounts.Eater++;
+      }
+
+      addTailSegment() {
+        // Add a tail segment to one of the tail groups
+        let minLength = Math.min(...this.tailGroups.map(group => group.length));
+        const shortestTails = this.tailGroups
+          .map((tail, index) => ({ tail, index }))
+          .filter(t => t.tail.length === minLength);
+        const selectedTail = shortestTails[Math.floor(Math.random() * shortestTails.length)];
+        const lastSegment = selectedTail.tail[selectedTail.tail.length - 1];
+        const newSegment = new TailSegment(lastSegment, 0.9, .8, lastSegment.opacity * 0.9);
+        selectedTail.tail.push(newSegment);
+      }
+
+      eatCreature(creature, currentTime) {
+        const creatureArea = Math.PI * creature.radius * creature.radius;
+        const eaterArea = Math.PI * this.radius * this.radius;
+        const newArea = eaterArea + (creatureArea * 0.7);
+        const newRadius = Math.sqrt(newArea / Math.PI);
+        this.setTargetRadius(newRadius, currentTime);
+        this.addTailSegment();
+        
+        this.maxHealth += creature.radius ** 0.5;
+        this.health = Math.min(this.health + this.maxHealth * (creature.radius / this.radius) * 2, this.maxHealth);
+        this.state = 'idle';
+        this.targetPrey = null;
+      }
+
+      destroy(currentTime) {
+        this.bodySegments.forEach(segment => {
+          segment.puller = null;
+        });
+        this.bodySegments = null;
+        this.tailJoint.forEach(tailJoint => {
+          tailJoint.parent = null;
+        });
+        this.tailJoint = null;
+        this.tailGroups.forEach(group => {
+          group.forEach(segment => {
+            segment.puller = null;
+          });
+        });
+        this.tailGroups = null;
+        this.targetPrey = null;
+        super.destroy(currentTime);
+      }
+
+      update(breezeX, breezeY, currentTime) {
+        this.runSpeed = Math.min(EATER_RUN_SPEED_FACTOR / (this.radius / 6), EATER_RUN_SPEED_FACTOR);
+        this.chaseSpeed = Math.min(EATER_CHASE_SPEED_FACTOR / (this.radius / 12), EATER_CHASE_SPEED_FACTOR);
+        this.maxEnergy = Math.min(EATER_MAX_ENERGY_FACTOR / (this.radius / 5), EATER_MAX_ENERGY_FACTOR);
+        this.baseIdleSpeed = EATER_IDLE_SPEED_MIN + Math.random() * (EATER_IDLE_SPEED_MAX - EATER_IDLE_SPEED_MIN);
+
+        if (this.health <= 0 && !this.isDead) {
+          this.isDead = true;
+          this.deathTime = currentTime;
+        }
+
+        if (this.isDead) {
+          this.speed = Math.max(this.speed - 0.01, 0);
+          let angleDiff = this.targetAngle - this.angle;
+          this.angle += normAngle(angleDiff) * 0.05;
+        }
+
+        const speedX = Math.cos(this.angle) * this.speed;
+        const speedY = Math.sin(this.angle) * this.speed;
+        const breezeEffect = this.isDead ? (BLOB_BREEZE_EFFECT / 3) : (EATER_BREEZE_EFFECT / this.radius);
+        this.x += speedX + (breezeX * breezeEffect);
+        this.y += speedY + (breezeY * breezeEffect);
+
+        if (this.x - this.radius > canvas.width) this.x = -this.radius;
+        if (this.x + this.radius < 0) this.x = canvas.width + this.radius;
+        if (this.y - this.radius > canvas.height) this.y = -this.radius;
+        if (this.y + this.radius < 0) this.y = canvas.height + this.radius;
+
+        // Update body segments and tail joints
+        this.bodySegments.forEach(segment => {
+          segment.update();
+          // Adjust overlap to 50%
+          const desiredDistance = -(segment.puller.radius * 1.0); // Negative for overlap
+          const dx = segment.puller.x - segment.x;
+          const dy = segment.puller.y - segment.y;
+          const currentDistance = Math.sqrt(dx * dx + dy * dy);
+          if (currentDistance !== desiredDistance) {
+            const angle = Math.atan2(dy, dx);
+            segment.x = segment.puller.x + Math.cos(angle) * desiredDistance;
+            segment.y = segment.puller.y + Math.sin(angle) * desiredDistance;
+          }
+        });
+        
+        this.tailJoint.forEach(tailJoint => tailJoint.updatePosition());
+        
+        this.tailGroups.forEach(group => {
+          group.forEach(segment => segment.update());
+        });
+
+        if (this.isDead) return;
+
+        const nearbyLargerEaters = creatures
+          .filter(c => c instanceof Eater && c !== this && c.radius > this.radius)
+          .map(eater => ({
+            eater,
+            distance: Math.sqrt((eater.x - this.x) ** 2 + (eater.y - this.y) ** 2) - eater.radius
+          }))
+          .filter(e => e.distance < this.preyRange * 1.2 + this.radius);
+
+        if (nearbyLargerEaters.length > 0) {
+          this.state = 'flee';
+          const closestLargerEater = nearbyLargerEaters.sort((a, b) => a.distance - b.distance)[0].eater;
+          const dx = this.x - closestLargerEater.x;
+          const dy = this.y - closestLargerEater.y;
+          this.targetAngle = Math.atan2(dy, dx);
+          this.speed = Math.min(this.speed + 0.2, this.runSpeed);
+          this.targetPrey = null;
+        } else if (this.state === 'chase' && this.targetPrey) {
+          const dx = this.targetPrey.x - this.x;
+          const dy = this.targetPrey.y - this.y;
+          this.targetAngle = Math.atan2(dy, dx);
+          const distance = Math.sqrt(dx * dx + dy * dy) - this.radius - this.targetPrey.radius;
+          if (distance + this.targetPrey.speed < this.speed) {
+            this.speed = Math.max(this.speed - 0.2, distance);
+          } else {
+            this.speed = Math.min(this.speed + 0.2, this.chaseSpeed);
+          }
+          this.energy = Math.max(this.energy - 1, 0);
+          if (this.energy === 0) {
+            this.state = 'idle';
+            this.targetPrey = null;
+          }
+        } else {
+          this.state = 'idle';
+          this.health = Math.max(this.health - .8, 0);
+          this.idleSpeed = this.baseIdleSpeed / (this.radius / 5) ** 0.3;
+          this.energy = Math.min(this.energy + 0.5, this.maxEnergy);
+
+          if (this.speed > this.idleSpeed) {
+            this.speed = Math.max(this.speed - 0.05, this.idleSpeed);
+          } else {
+            this.speed = Math.min(this.speed + 0.05, this.idleSpeed);
+          }
+
+          if (this.energy === this.maxEnergy) {
+            const nearbyPrey = creatures
+              .filter(c => (c instanceof Muncher || (c instanceof Eater && c !== this && c.radius < this.radius)))
+              .map(prey => ({
+                prey,
+                distance: Math.sqrt((prey.x - this.x) ** 2 + (prey.y - this.y) ** 2) - prey.radius,
+                radius: prey.radius
+              }))
+              .filter(p => p.distance < this.preyRange + this.radius);
+
+            const bestPrey = selectBestPrey(this.x, this.y, nearbyPrey);
+            if (bestPrey) {
+              this.targetPrey = bestPrey;
+              this.state = 'chase';
+            }
+          }
+        }
+
+        if (this.state === 'idle') {
+          const elapsedTime = currentTime / 10000;
+          const swayFrequency = 6 * (this.idleSpeed / this.baseIdleSpeed);
+          const swayAmplitude = 0.07 * (this.idleSpeed / this.baseIdleSpeed);
+          const dx = (canvas.width / 2) - this.x;
+          const dy = (canvas.height / 2) - this.y;
+          const distToCenter = Math.sqrt(dx * dx + dy * dy);
+          const maxDistance = Math.min(canvas.height, canvas.width) * 0.5;
+          const healthRatio = this.health / this.maxHealth;
+
+          // Edge avoidance logic
+          const edgeZone = 0.15 * Math.min(canvas.width, canvas.height); // 15% of smaller dimension
+          let edgeInfluence = 0;
+          if (this.x < edgeZone) edgeInfluence = Math.max(edgeInfluence, (edgeZone - this.x) / edgeZone);
+          if (this.x > canvas.width - edgeZone) edgeInfluence = Math.max(edgeInfluence, (this.x - (canvas.width - edgeZone)) / edgeZone);
+          if (this.y < edgeZone) edgeInfluence = Math.max(edgeInfluence, (edgeZone - this.y) / edgeZone);
+          if (this.y > canvas.height - edgeZone) edgeInfluence = Math.max(edgeInfluence, (this.y - (canvas.height - edgeZone)) / edgeZone);
+
+          if (edgeInfluence > 0) {
+            const angleToCenter = Math.atan2(dy, dx);
+            const edgeTurnStrength = Math.min(0.1, edgeInfluence * 0.2); // Subtle turn, max 0.1 radians per frame
+            const angleDiff = normAngle(angleToCenter - this.targetAngle);
+            this.targetAngle += angleDiff * edgeTurnStrength;
+            this.targetAngle = normAngle(this.targetAngle);
+          } else if (distToCenter > maxDistance && healthRatio < 0.5 && Math.random() < (0.02 + (0.5 - healthRatio) * 0.5)) {
+            const angleToCenter = Math.atan2(dy, dx);
+            const angleDiff = normAngle(angleToCenter - this.targetAngle);
+            const turnStrength = Math.min(0.05, (distToCenter - maxDistance) / maxDistance * 0.2);
+            this.targetAngle += angleDiff * turnStrength;
+            this.targetAngle = normAngle(this.targetAngle);
+          }
+
+          const swayOffset = Math.sin(elapsedTime * swayFrequency * Math.PI * 2) * swayAmplitude;
+          this.angle += swayOffset;
+        }
+
+        let turnRate = (this.state == 'chase' ? 0.2 : 0.1) / (this.radius / 5) ** 2;
+        turnRate = Math.max(this.state == 'chase' ? 0.12 : 0.05, turnRate);
+        let angleDiff = this.targetAngle - this.angle;
+        this.angle += normAngle(angleDiff) * turnRate;
+
+        if (this.isTransitioning && this.radiusTransitionStart !== null) {
+          const elapsed = currentTime - this.radiusTransitionStart;
+          const t = Math.min(elapsed / this.transitionDuration, 1);
+          this.radius = this.radius + (this.targetRadius - this.radius) * t;
+          if (t >= 1) {
+            this.radius = this.targetRadius;
+            this.radiusTransitionStart = null;
+            this.isTransitioning = false;
+          }
+        }
+      }
+
+      draw() {
+        let healthRatio = Math.min(1, (this.health / (this.maxHealth * 0.75)) ** 2);
+        let h = 35 * healthRatio;
+        let s = 100;
+        let l = 40 + 10 * healthRatio;
+
+        // Draw head (same as original pentagon/diamond shape)
+        ctx.beginPath();
+        for (let i = 0; i < 4; i++) {
+          const angle = this.angle + (i * Math.PI / 2);
+          const angleDiff = (angle - this.angle + 2 * Math.PI) % (2 * Math.PI);
+          let scaleFactor;
+          if (angleDiff < Math.PI / 4 || angleDiff > 7 * Math.PI / 4) {
+            scaleFactor = 0.8; // Forward point
+          } else if (angleDiff > 3 * Math.PI / 4 && angleDiff < 5 * Math.PI / 4) {
+            scaleFactor = 0.8; // Backward point
+          } else {
+            scaleFactor = 1.2; // Side points
+          }
+          const x = this.x + (this.radius * scaleFactor) * Math.cos(angle);
+          const y = this.y + (this.radius * scaleFactor) * Math.sin(angle);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.fillStyle = `hsla(${h}, ${s}%, ${l}%, 0.5)`;
+        ctx.fill();
+        ctx.strokeStyle = `hsl(${h}, ${s}%, ${l}%)`;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // Draw body segments as squared diamonds
+        this.bodySegments.forEach((segment, index) => {
+          const tailWidth = segment.radius; // Use segment's radius
+          const tailHeight = segment.radius; // Use segment's radius
+          const cosA = Math.cos(segment.angle);
+          const sinA = Math.sin(segment.angle);
+
+          let drawX = segment.x;
+          let drawY = segment.y;
+          const pullerX = segment.puller.x;
+          const pullerY = segment.puller.y;
+          const dxRaw = pullerX - segment.x;
+          const dyRaw = pullerY - segment.y;
+          const dxAlt = dxRaw + (dxRaw < 0 ? canvas.width : -canvas.width);
+          const dyAlt = dyRaw + (dyRaw < 0 ? canvas.height : -canvas.height);
+          if (Math.abs(dxAlt) < Math.abs(dxRaw)) drawX += dxRaw < 0 ? canvas.width : -canvas.width;
+          if (Math.abs(dyAlt) < Math.abs(dyRaw)) drawY += dyRaw < 0 ? canvas.height : -canvas.height;
+
+          ctx.beginPath();
+          ctx.moveTo(drawX + cosA * tailHeight, drawY + sinA * tailHeight); // Top
+          ctx.lineTo(drawX + sinA * tailWidth, drawY - cosA * tailWidth);   // Right
+          ctx.lineTo(drawX - cosA * tailHeight, drawY - sinA * tailHeight); // Bottom
+          ctx.lineTo(drawX - sinA * tailWidth, drawY + cosA * tailWidth);   // Left
+          ctx.closePath();
+          ctx.fillStyle = `hsla(${h}, ${s}%, ${l}%, ${segment.opacity * 0.5})`;
+          ctx.fill();
+          ctx.strokeStyle = `hsl(${h}, ${s}%, ${l}%, ${segment.opacity})`;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        });
+
+        // Draw tail groups
+        this.tailGroups.forEach(group => {
+          group.forEach(segment => {
+            const tailWidth = segment.radius * 0.4;
+            const tailHeight = segment.radius;
+            const cosA = Math.cos(segment.angle);
+            const sinA = Math.sin(segment.angle);
+
+            let drawX = segment.x;
+            let drawY = segment.y;
+            const pullerX = segment.puller.x;
+            const pullerY = segment.puller.y;
+            const dxRaw = pullerX - segment.x;
+            const dyRaw = pullerY - segment.y;
+            const dxAlt = dxRaw + (dxRaw < 0 ? canvas.width : -canvas.width);
+            const dyAlt = dyRaw + (dyRaw < 0 ? canvas.height : -canvas.height);
+            if (Math.abs(dxAlt) < Math.abs(dxRaw)) drawX += dxRaw < 0 ? canvas.width : -canvas.width;
+            if (Math.abs(dyAlt) < Math.abs(dyRaw)) drawY += dyRaw < 0 ? canvas.height : -canvas.height;
+
+            ctx.beginPath();
+            ctx.moveTo(drawX + cosA * tailHeight, drawY + sinA * tailHeight);
+            ctx.lineTo(drawX + sinA * tailWidth, drawY - cosA * tailWidth);
+            ctx.lineTo(drawX - cosA * tailHeight, drawY - sinA * tailHeight);
+            ctx.lineTo(drawX - sinA * tailWidth, drawY + cosA * tailWidth);
+            ctx.closePath();
+            ctx.fillStyle = `hsla(${h}, ${s}%, ${l}%, ${segment.opacity * 0.4})`;
+            ctx.fill();
+            ctx.strokeStyle = `hsla(${h}, ${s}%, ${l}%, ${segment.opacity})`;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          });
+        });
+      }
+    }
+    
+    class Coral extends Creature {
+      constructor(x, y, targetRadius) {
+        super(x, y, targetRadius || ( 50 + Math.random()*10 ), 0, 0, 1000);
+        this.baseX = x; // Fixed position
+        this.baseY = y;
+        this.swayAngle = Math.random() * Math.PI * 2;
+        this.swaySpeed = 0.02 + Math.random() * 0.01;
+        this.swayAmplitude = 5 + this.radius * 0.5;
+        this.health = 800;
+        this.maxHealth = this.health;
+       
+        this.basePoints=10;
+
+        // Radial motion properties
+        this.radialSpeed = 0;
+        this.maxRadialSpeed = 0.01;
+        this.radialDecay = 0.995;
+        this.radialAngle = 0;
+
+        // Initialize spikes (one per base point)
+        this.spikes = [];
+        this.updateSpikes();
+
+        creationCounts.Coral = (creationCounts.Coral || 0) + 1;
+      }
+
+      // Update the spikes array based on current basePoints
+      updateSpikes() {
+        const previousPoints = this.spikes.length;
+        this.spikes = []; // Reset spikes array
+
+        for (let i = 0; i < this.basePoints; i++) {
+          const baseAngle = (i * 2 * Math.PI) / this.basePoints;
+          this.spikes.push({
+            baseAngle: baseAngle, // Angle from center to base point            
+          });
+        }
+
+        // If a new point was added, ensure smooth transition by adjusting angles
+        if (this.basePoints > previousPoints) {
+          this.spikes.forEach((spike, index) => {
+            spike.baseAngle = (index * 2 * Math.PI) / this.basePoints;
+          });
+        }
+      }
+
+      spawnChildCorals() {
+        const childCount = 3;
+        for (let i = 0; i < childCount; i++) {
+          const distanceFactor = 0.5 + Math.random() * 0.5;
+          const distance = this.targetRadius * distanceFactor;
+          const angle = ((i * 2*Math.PI) / childCount) + (Math.random() - 0.5) * 0.5;
+          const childX = this.x + Math.cos(angle) * distance;
+          const childY = this.y + Math.sin(angle) * distance;
+          const sizeFactor = 0.8 + Math.random() * 0.1; // 20-40%
+          const childRadius = this.targetRadius * sizeFactor;
+          const childCoral = new Coral(childX, childY, childRadius );
+          creatures.push(childCoral);
+        }
+      }
+
+      eatEater(eater, currentTime) {
+        // To be implemented
+      }
+
+      feedOff(creature, currentTime) {
+        const newRadius = this.targetRadius + 1 / creature.radius;
+        this.setTargetRadius(newRadius, currentTime);
+        this.radialSpeed = Math.min(this.radialSpeed + 0.001, this.maxRadialSpeed);
+      }
+
+      update(breezeX, breezeY, currentTime) {
+        // Update sway around base position
+        this.swayAngle += this.swaySpeed;
+        this.x = this.baseX + Math.cos(this.swayAngle) * this.swayAmplitude;
+        this.y = this.baseY + Math.sin(this.swayAngle) * this.swayAmplitude;
+
+        // Update radial motion for entire coral rotation
+        this.radialAngle += this.radialSpeed;
+        this.radialSpeed *= this.radialDecay;
+        if (Math.abs(this.radialSpeed) < 0.0001) {
+          this.radialSpeed = 0;
+        }
+
+        super.update(0, 0, currentTime);
+      }
+
+      draw(currentTime) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.radialAngle);
+
+        // smaller base radius
+        const baseRadius = 30*.2 + (this.radius-30) * 0.1;
+
+        // Draw diamond spikes
+        const width = ( (Math.PI*2 * baseRadius) / this.basePoints ) * .45
+        this.spikes.forEach( (spike,i) => {
+          const baseAngle = spike.baseAngle + (Math.sin(this.swayAngle * 0.5) * 0.1);
+          const baseX = baseRadius * Math.cos(baseAngle);
+          const baseY = baseRadius * Math.sin(baseAngle);
+          
+          const timeFactor = currentTime * (2 * Math.PI) / 60;
+          const baseSpikeLength = this.radius * 0.85; // Midpoint between 0.8 and 0.9
+          const amplitude = this.radius * 0.05; // Half the range (0.1 / 2)
+          
+          const spikeLength = this.radius * (.8 + .1 * Math.sin(currentTime/300 + ( i%2==0 ? 0 : Math.PI) ));
+
+          // Calculate spike apex
+          const apexX = spikeLength * Math.cos(baseAngle);
+          const apexY = spikeLength * Math.sin(baseAngle);
+
+          // Calculate base width (perpendicular to spike direction)
+          const perpAngle = baseAngle + Math.PI / 2;
+          const baseLeftX = baseX + width * Math.cos(perpAngle);
+          const baseLeftY = baseY + width * Math.sin(perpAngle);
+          const baseRightX = baseX - width * Math.cos(perpAngle);
+          const baseRightY = baseY - width * Math.sin(perpAngle);
+          
+          // Calculate extra point going past the center (opposite direction)
+          const extraPointLength = baseRadius* .25; // Extend further than the center
+          const extraPointX = extraPointLength * Math.cos(baseAngle); // Opposite direction
+          const extraPointY = extraPointLength * Math.sin(baseAngle);
+
+          ctx.beginPath();
+          ctx.moveTo(baseLeftX, baseLeftY);
+          ctx.lineTo(apexX, apexY);
+          ctx.lineTo(baseRightX, baseRightY);
+          ctx.lineTo(extraPointX, extraPointY); // Extra point past center
+          ctx.closePath();
+          ctx.fillStyle = `hsla(300, 100%, 50%, 0.1)`;
+          ctx.fill();
+          ctx.strokeStyle = `hsla(300, 100%, 50%, 0.35)`;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        });
+
+        ctx.restore();
+      }
+    }
+
+    class Shadow extends Creature {
+      constructor() {       
+        const spawnLeft = Math.random() < 0.5;
+        const radius = 100 + Math.random() * 50; // 200 to 300
+        const x = spawnLeft ? -radius*2 : canvas.width + radius*2;
+        const y = radius + Math.random() * (canvas.height-radius*2);
+        super( x, y, radius, 0, 0, 10);
+        this.radius=radius;
+        this.speed = 1 + Math.random() * 1; // Speed between 2 and 3
+        this.angle = spawnLeft ? 0 : Math.PI; // Left to right or right to left
+        this.direction = spawnLeft ? 1 : -1; // 1 for left-to-right, -1 for right-to-left
+        
+        this.tailSegments = [];
+        let previous = this;
+        for (let i = 0; i < 5; i++) {
+          const segment = new TailSegment(previous, 0.9, .5, .4-i*.05);
+          segment.wrap=false;
+          this.tailSegments.push(segment);
+          previous = segment;
+          
+        }
+        
+        creationCounts.Shadow++;
+      }
+
+      update(breezeX, breezeY, currentTime) {
+        const speedX = Math.cos(this.angle) * this.speed;
+        const speedY = Math.sin(this.angle) * this.speed;
+        this.x += speedX;
+        this.y += speedY;
+
+        this.tailSegments.forEach(segment => segment.update());
+
+        // Check if completely off-screen on the opposite side
+        if (this.direction === 1 && this.x - this.radius*2 > canvas.width) {
+          this.destroy(currentTime);
+          deathStats.Shadow.total++;
+          creatures = creatures.filter(c => c !== this);
+        } else if (this.direction === -1 && this.x + this.radius < 0) {
+          this.destroy(currentTime);
+          deathStats.Shadow.total++;
+          creatures = creatures.filter(c => c !== this);
+        }
+      }
+
+      draw() {        ;
+
+        // Draw tail segments
+        this.tailSegments.forEach(segment => {
+          const tailWidth = segment.radius * 0.5;
+          const tailHeight = segment.radius;
+          const cosTailA = Math.cos(segment.angle);
+          const sinTailA = Math.sin(segment.angle);
+
+          let drawX = segment.x;
+          let drawY = segment.y;          
+
+          ctx.beginPath();
+          ctx.moveTo(drawX + cosTailA * tailHeight, drawY + sinTailA * tailHeight);
+          ctx.lineTo(drawX + sinTailA * tailWidth, drawY - cosTailA * tailWidth);
+          ctx.lineTo(drawX - cosTailA * tailHeight, drawY - sinTailA * tailHeight);
+          ctx.lineTo(drawX - sinTailA * tailWidth, drawY + cosTailA * tailWidth);
+          ctx.closePath();
+          ctx.fillStyle = `hsla(0,0%,0%,${segment.opacity})`;
+          ctx.fill();
+        });
+        
+        // Draw main body as diamond
+        const cosA = Math.cos(this.angle);
+        const sinA = Math.sin(this.angle)
+        
+        ctx.beginPath();
+        ctx.moveTo(this.x + cosA * this.radius, this.y + sinA * this.radius*.5); // Front
+        ctx.lineTo(this.x + sinA * this.radius, this.y - cosA * this.radius*.5); // Right
+        ctx.lineTo(this.x - cosA * this.radius, this.y - sinA * this.radius*.5); // Back
+        ctx.lineTo(this.x - sinA * this.radius, this.y + cosA * this.radius*.5); // Left
+        ctx.closePath();
+        ctx.fillStyle = `hsla(0,0%,0%,0.5)`;
+        ctx.fill();       
+      }
+    }
+
+    class Ripple {
+      constructor( x, y, size=50 ) {
+        this.x = x
+        this.y = y
+        this.maxSize = size * (.8+Math.random()*.2)
+        this.radius = 0
+        this.duration = 800 + (size**.5) * 50
+        this.startTime = performance.now( )
+        this.initialRadius = 3
+        this.maxAlpha = 0.2 + Math.random( ) * 0.1
+        this.progress = 0
+        this.h = Math.random( ) * 360
+        this.s = 80
+        this.l = 50
+      }
+
+      update( currentTime ) {
+        const elapsed = currentTime - this.startTime
+        this.progress = Math.min( elapsed / this.duration, 1 )    
+        return this.progress < 1
+      }
+
+      draw( ) 
+      {
+        ctx.lineWidth = 2
+        
+        const minRange = 0.4
+        const maxRange = 1.0
+        const range = maxRange - minRange
+        
+        for ( let i = 0; i < 3; i++ ) {
+          let curProgress = (minRange + range*(i/2)) * this.progress
+          let sqrtProgress = Math.sqrt( curProgress )
+          const radius = this.maxSize * sqrtProgress
+          
+          curProgress = (minRange + range*((4-i)/2)) * this.progress
+          sqrtProgress = Math.sqrt( curProgress )
+          const alpha = this.maxAlpha * (1-sqrtProgress)
+          
+          ctx.beginPath( )
+          ctx.arc( this.x, this.y, radius, 0, Math.PI * 2 )
+          const color = `hsla( ${Math.round( this.h )}, ${Math.round( this.s )}%, ${Math.round( this.l + 80 )}%, ${alpha} )`
+          ctx.strokeStyle = color
+          ctx.stroke( )
+          ctx.closePath( )
+        }
+      }
+    }
+    
+    const initialBlobCount = 300;
+    let creatures = [];
+    for (let i = 0; i < initialBlobCount; i++) {
+      creatures.push(new Blob());
+    }
+
+    const initialSpeckCount = 200;
+    let specks = [];
+    for (let i = 0; i < initialSpeckCount; i++) {
+      specks.push(new Speck());
+    }
+    let ripples = []; // Array to store active ripples
+
+    function updateBreeze() {
+      angleChangeTimer++;
+      if (angleChangeTimer >= ANGLE_CHANGE_PERIOD) {
+        targetBreezeAngle = Math.random() * Math.PI * 2;
+        angleChangeTimer = 0;
+      }
+
+      let angleDiff = targetBreezeAngle - breezeAngle;
+      breezeAngle += normAngle(angleDiff) * (1 / ANGLE_CHANGE_PERIOD);
+    }
+
+    function setNewTargetBgColor() {      
+      targetH = 170 + Math.random() * 120;
+      targetS = 70 + Math.random() * 30;
+      targetL = 7 + Math.random() * 3;
+    }
+    
+    bbright = 0;
+    
+    function updateBackground(currentTime) {
+      const elapsed = currentTime - fadeStartTime;
+      
+      // Linear interpolation
+      const t = Math.min(elapsed / fadeDuration, 1);
+      h = startH + (targetH - startH) * t;
+      s = startS + (targetS - startS) * t;
+      l = startL + (targetL - startL) * t;
+
+      ctx.fillStyle = `hsl(${Math.round(h)}, ${Math.round(s)}%, ${Math.round(l+bbright)}%)`;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      if (elapsed >= fadeDuration) {
+        // Set new starting points to current values
+        startH = h;
+        startS = s;
+        startL = l;
+        
+        setNewTargetBgColor();
+        
+        fadeStartTime = currentTime;
+        fadeDuration = 10000 + Math.random() * 20000; // 10-30 seconds
+      }
+    }    
+
+    function isSpotClear(x, y) {
+      for (let creature of creatures) {
+        const dx = creature.x - x;
+        const dy = creature.y - y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance < (50 + creature.radius)) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    function spawnCreatures() {
+      if (frameCount % 3 === 0) {
+        for (let i = 0; i < 10; i++) {
+          const x = Math.random() * canvas.width;
+          const y = Math.random() * canvas.height;
+          if (isSpotClear(x, y)) {
+            const eaterCount = creatures.filter(c => c instanceof Eater).length;
+            const muncherCount = creatures.filter(c => c instanceof Muncher).length;
+            const coralCount = creatures.filter(c => c instanceof Coral).length;
+            
+            if (Math.random() < -0.0001) { // shadow turned off
+              creatures.push(new Shadow());
+            }
+            else if (Math.random() < -0.001) { // Coral turned off
+              const centerX = canvas.width / 2;
+              const centerY = canvas.height / 2;
+              const dx = x - centerX;
+              const dy = y - centerY;
+              const distance = Math.sqrt(dx * dx + dy * dy);
+              const maxDistance = Math.sqrt(centerX * centerX + centerY * centerY); // Distance to corner
+              const distanceRatio = distance / maxDistance;
+              const angle = Math.atan2(dy, dx);           
+             
+              // Determine quadrant (0: top-right, 1: top-left, 2: bottom-left, 3: bottom-right)
+              const quadrant = Math.floor(((angle + Math.PI) / (Math.PI / 2) + 4) % 4);
+              
+              // Check if any coral exists in this quadrant
+              const coralInQuadrant = creatures.some(c => {
+                if (!(c instanceof Coral)) return false;
+                const cdx = c.x - centerX;
+                const cdy = c.y - centerY;
+                const cAngle = Math.atan2(cdy, cdx);
+                const cQuadrant = Math.floor(((cAngle + Math.PI) / (Math.PI / 2) + 4) % 4);
+                return cQuadrant === quadrant;
+              });
+
+              // Check if spot is between 60% and 70% from center to corner and at least 100px from edges
+              const edgeBuffer = 110;
+              const awayFromEdges = (
+                x >= edgeBuffer && 
+                x <= canvas.width - edgeBuffer && 
+                y >= edgeBuffer && 
+                y <= canvas.height - edgeBuffer
+              );
+              if (distanceRatio >= 0.6 && distanceRatio <= 0.7 && !coralInQuadrant && awayFromEdges) {
+                creatures.push(new Coral(x, y));
+              }
+            }
+            else if (muncherCount > 10 && eaterCount < muncherCount / 20 && Math.random() < 0.003) {
+              creatures.push(new Eater(x, y));
+            }           
+            else if (Math.random() < 0.04) {
+              creatures.push(new Muncher(x, y));
+            }
+            else {
+              creatures.push(new Blob(x, y));
+            }
+          }
+        }
+      }
+    }
+
+    function updateDebugInfo() {
+      if (!showDebugInfo) return;
+
+      const blobCount = creatures.filter(c => c instanceof Blob).length;
+      const muncherCount = creatures.filter(c => c instanceof Muncher).length;
+      const eaterCount = creatures.filter(c => c instanceof Eater).length;
+      const coralCount = creatures.filter(c => c instanceof Coral).length;
+      const shadowCount = creatures.filter(c => c instanceof Shadow).length;
+      const speckCount = specks.length;
+      
+      // Left-side debug info
+      let debugText = '<strong>Debug Info:</strong><br>';
+      debugText += `Frame: ${frameCount}<br>`;
+      debugText += `FPS: ${Math.round(1000 / (performance.now() - lastTime))}<br>`;
+      debugText += `Blobs: ${blobCount}<br>`;
+      debugText += `Munchers: ${muncherCount}<br>`;
+      debugText += `Corals: ${coralCount}<br>`;
+      debugText += `Eaters: ${eaterCount}<br>`;
+      debugText += `Shadows: ${shadowCount}<br>`;
+      debugText += `Specks: ${speckCount}<br>`;
+      debugText += `Breeze Angle: ${(breezeAngle * 180 / Math.PI).toFixed(1)}°<br>`;
+      debugText += `BG: hsl(${Math.round(h)}, ${Math.round(s)}%, ${Math.round(l)}%)<br>`;
+      debugInfoDiv.innerHTML = debugText;
+
+      // Right-side info bar
+      let infoText = '<strong>Creature Stats:</strong><br>';
+      infoText += '<br><em>Created:</em><br>';
+      infoText += `Blobs: ${creationCounts.Blob}<br>`;
+      infoText += `Munchs: ${creationCounts.Muncher}<br>`;
+      infoText += `Corals: ${creationCounts.Coral}<br>`;
+      infoText += `Eaters: ${creationCounts.Eater}<br>`;
+      infoText += `Shadows: ${creationCounts.Shadow}<br>`;
+      
+      infoText += '<br><em>Avg Lifespan (s):</em><br>';
+      infoText += `Blobs: ${(lifespanData.Blob.count > 0 ? lifespanData.Blob.total / lifespanData.Blob.count : 0).toFixed(1)}<br>`;
+      infoText += `Munchs: ${(lifespanData.Muncher.count > 0 ? lifespanData.Muncher.total / lifespanData.Muncher.count : 0).toFixed(1)}<br>`;
+      infoText += `Corals: ${(lifespanData.Coral.count > 0 ? lifespanData.Coral.total / lifespanData.Coral.count : 0).toFixed(1)}<br>`;
+      infoText += `Eaters: ${(lifespanData.Eater.count > 0 ? lifespanData.Eater.total / lifespanData.Eater.count : 0).toFixed(1)}<br>`;
+      infoText += `Shadows: ${(lifespanData.Shadow.count > 0 ? lifespanData.Shadow.total / lifespanData.Shadow.count : 0).toFixed(1)}<br>`;
+      
+      infoText += '<br><em>Avg Count Alive:</em><br>';
+      infoText += `Blobs: ${avgCounts.Blob.avg.toFixed(1)}<br>`;
+      infoText += `Munchs: ${avgCounts.Muncher.avg.toFixed(1)}<br>`;
+      infoText += `Corals: ${avgCounts.Coral.avg.toFixed(1)}<br>`;
+      infoText += `Eaters: ${avgCounts.Eater.avg.toFixed(1)}<br>`;
+      infoText += `Shadows: ${avgCounts.Shadow.avg.toFixed(1)}<br>`;
+      
+      infoText += '<br><em>Size Stats (radius):</em><br>';
+      infoText += `Blob Avg: ${sizeStats.Blob.avg.toFixed(1)}, Max: ${sizeStats.Blob.max.toFixed(1)}<br>`;
+      infoText += `Munch Avg: ${sizeStats.Muncher.avg.toFixed(1)}, Max: ${sizeStats.Muncher.max.toFixed(1)}<br>`;
+      infoText += `Coral Avg: ${sizeStats.Coral.avg.toFixed(1)}, Max: ${sizeStats.Coral.max.toFixed(1)}<br>`;
+      infoText += `Eater Avg: ${sizeStats.Eater.avg.toFixed(1)}, Max: ${sizeStats.Eater.max.toFixed(1)}<br>`;
+      infoText += `Shadow Avg: ${sizeStats.Shadow.avg.toFixed(1)}, Max: ${sizeStats.Shadow.max.toFixed(1)}<br>`;
+      
+      infoText += '<br><em>Muncher Deaths:</em><br>';
+      const mTotal = deathStats.Muncher.total;
+      infoText += `Eaten: ${mTotal > 0 ? ((deathStats.Muncher.eaten / mTotal) * 100).toFixed(1) : 0}% (${deathStats.Muncher.eaten})<br>`;
+      infoText += `Starved: ${mTotal > 0 ? ((deathStats.Muncher.starved / mTotal) * 100).toFixed(1) : 0}% (${deathStats.Muncher.starved})<br>`;
+      
+      infoText += '<br><em>Eater Deaths:</em><br>';
+      const eTotal = deathStats.Eater.total;
+      infoText += `Eaten: ${eTotal > 0 ? ((deathStats.Eater.eaten / eTotal) * 100).toFixed(1) : 0}% (${deathStats.Eater.eaten})<br>`;
+      infoText += `Starved: ${eTotal > 0 ? ((deathStats.Eater.starved / eTotal) * 100).toFixed(1) : 0}% (${deathStats.Eater.starved})<br>`;
+      
+      infoText += '<br><em>Coral Deaths:</em><br>';
+      const cTotal = deathStats.Coral.total;
+      infoText += `Starved: ${cTotal > 0 ? ((deathStats.Coral.starved / cTotal) * 100).toFixed(1) : 0}% (${deathStats.Coral.starved})<br>`;
+      
+      infoText += '<br><em>Shadow Deaths:</em><br>';
+      infoText += `Total: ${deathStats.Shadow.total}<br>`;
+      
+      infoBarDiv.innerHTML = infoText;
+    }
+    
+    function checkCollisions(currentTime) {
+      for (let i = 0; i < creatures.length; i++) {
+        for (let j = i + 1; j < creatures.length; j++) {
+          const creature1 = creatures[i];
+          const creature2 = creatures[j];
+          
+          const dx = creature2.x - creature1.x;
+          const dy = creature2.y - creature1.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          
+          // Handle actual collisions
+          if (distance < (creature1.radius + creature2.radius)) {
+            let consumer = null;
+            let consumed = null;
+            let consumeAction = null;
+            let statType = null;
+
+            // Determine consumer and consumed based on type and size
+            if (creature1 instanceof Blob && creature2 instanceof Blob) {
+              consumer = creature1.radius > creature2.radius ? creature1 : creature2;
+              consumed = creature1.radius > creature2.radius ? creature2 : creature1;
+              consumeAction = () => consumer.merge(consumed, currentTime);
+            }
+            else if ((creature1 instanceof Muncher && creature2 instanceof Blob) ||
+                     (creature2 instanceof Muncher && creature1 instanceof Blob)) {
+              consumer = creature1 instanceof Muncher ? creature1 : creature2;
+              consumed = creature1 instanceof Blob ? creature1 : creature2;
+              consumeAction = () => consumer.eatBlob(consumed, currentTime);
+            }
+            else if ((creature1 instanceof Eater && creature2 instanceof Muncher) ||
+                     (creature2 instanceof Eater && creature1 instanceof Muncher)) {
+              consumer = creature1 instanceof Eater ? creature1 : creature2;
+              consumed = creature1 instanceof Muncher ? creature1 : creature2;
+              consumeAction = () => consumer.eatCreature(consumed, currentTime);
+              statType = 'Muncher';
+              deathStats.Muncher.eaten++;
+              deathStats.Muncher.total++;
+            }
+            else if (creature1 instanceof Eater && creature2 instanceof Eater) {
+              if (creature1.radius > creature2.radius) {
+                consumer = creature1;
+                consumed = creature2;
+                consumeAction = () => consumer.eatCreature(consumed, currentTime);
+                statType = 'Eater';
+                deathStats.Eater.eaten++;
+                deathStats.Eater.total++;
+              }
+              else if (creature2.radius > creature1.radius) {
+                consumer = creature2;
+                consumed = creature1;
+                consumeAction = () => consumer.eatCreature(consumed, currentTime);
+                statType = 'Eater';
+                deathStats.Eater.eaten++;
+                deathStats.Eater.total++;
+              }
+            }
+            else if ((creature1 instanceof Coral && creature2 instanceof Eater) ||
+                     (creature2 instanceof Coral && creature1 instanceof Eater)) {
+              consumer = creature1 instanceof Coral ? creature1 : creature2;
+              consumed = creature1 instanceof Eater ? creature1 : creature2;
+              consumeAction = () => consumer.eatEater(consumed, currentTime);
+              statType = 'Eater';
+              deathStats.Eater.eaten++;
+              deathStats.Eater.total++;
+            }
+            else if ((creature1 instanceof Coral && (creature2 instanceof Muncher || creature2 instanceof Blob)) ||
+                     (creature2 instanceof Coral && (creature1 instanceof Muncher || creature1 instanceof Blob))) {
+              //feed off doesn't consume
+              consumer = creature1 instanceof Coral ? creature1 : creature2;
+              consumed = creature2 instanceof Coral ? creature2 : creature1;
+              consumer.feedOff(consumed, currentTime);              
+            }
+
+            // Execute consumption and remove consumed creature
+            if (consumer && consumed && consumeAction) {
+              consumeAction();
+              if (!(consumer instanceof Blob)) {
+                ripples.push(new Ripple(consumed.x, consumed.y, (consumer.radius ** .6) * 18 ) );
+              }
+              consumed.destroy(currentTime);
+              const consumedIndex = (consumed === creature1) ? i : j;
+              creatures.splice(consumedIndex, 1);
+              if (consumedIndex === i) {
+                i--; // Adjust outer loop if creature1 was removed
+                break; // Exit inner loop since i was consumed
+              } else {
+                j--; // Adjust inner loop if creature2 was removed
+              }
+            }            
+          }
+          // Handle Blob attraction (no consumption)
+          else if (creature1 instanceof Blob && creature2 instanceof Blob && distance < (creature1.radius + creature2.radius) * 1.5) {
+            const largerBlob = creature1.radius > creature2.radius ? creature1 : creature2;
+            const smallerBlob = creature1.radius > creature2.radius ? creature2 : creature1;
+            const targetAngle = Math.atan2(largerBlob.y - smallerBlob.y, largerBlob.x - smallerBlob.x);
+            let angleDiff = normAngle(targetAngle - smallerBlob.angle);
+            smallerBlob.angle = normAngle(smallerBlob.angle + angleDiff * 0.2);
+          }
+        }
+      }
+
+      // Handle creature deaths and bursting
+      const newBlobs = [];
+      const filteredCreatures = creatures.filter(creature => {
+        if (creature instanceof Muncher && !creature.isTransitioning && creature.radius < 2) {
+          deathStats.Muncher.starved++;
+          deathStats.Muncher.total++;
+          creature.destroy(currentTime);
+          return false;
+        }
+        if (creature instanceof Coral && creature.health <= 0) {
+          deathStats.Coral.starved++;
+          deathStats.Coral.total++;
+          creature.destroy(currentTime);
+          return false;
+        }
+        if (creature instanceof Eater && creature.isDead) {
+          const timeSinceDeath = currentTime - creature.deathTime;
+          if (timeSinceDeath >= EATER_ROT_TIME) {
+            deathStats.Eater.starved++;
+            deathStats.Eater.total++;
+            const eaterX = creature.x;
+            const eaterY = creature.y;
+            const totalRadius = creature.radius * 0.9;
+            const blobCount = 3 + Math.floor(Math.random() * 3);
+            const blobRadii = [];
+            let remainingRadius = totalRadius;
+            for (let i = 0; i < blobCount - 1; i++) {
+              const maxPossible = remainingRadius - ((blobCount - i - 1) * 0.5);
+              const radius = 0.5 + Math.random() * (maxPossible - 0.5);
+              blobRadii.push(radius);
+              remainingRadius -= radius;
+            }
+            blobRadii.push(remainingRadius);
+            for (let i = 0; i < blobCount; i++) {
+              const spawnRadius = creature.radius * (0.3 + Math.random() * 0.6);
+              const spawnAngle = Math.random() * Math.PI * 2;
+              const bx = eaterX + Math.cos(spawnAngle) * spawnRadius;
+              const by = eaterY + Math.sin(spawnAngle) * spawnRadius;
+              const speed = BLOB_SPEED_MIN + Math.random() * (BLOB_SPEED_MAX - BLOB_SPEED_MIN);
+              const angleAway = Math.atan2(by - eaterY, bx - eaterX);
+              newBlobs.push(new Blob(bx, by, blobRadii[i], speed * 0.1, angleAway));
+            }
+            ripples.push(new Ripple(creature.x, creature.y, (creature.radius * 12)));
+            creature.bodySegments.forEach(segment => {
+              const tailRadius = segment.radius * 0.4;
+              const dx = segment.x - eaterX;
+              const dy = segment.y - eaterY;
+              const angle = Math.atan2(dy, dx) + (Math.random() - 0.5) * 0.5;
+              const speed = BLOB_SPEED_MIN + Math.random() * (BLOB_SPEED_MAX - BLOB_SPEED_MIN);
+              newBlobs.push(new Blob(segment.x, segment.y, tailRadius, speed * .08, angle));
+              ripples.push(new Ripple(segment.x, segment.y, (segment.radius * 10)));
+            });
+            creature.tailGroups.forEach(group => {
+              group.forEach((segment, index) => {
+                if (index % 2 === 0) {
+                  const tailRadius = segment.radius * 0.3;
+                  const dx = segment.x - eaterX;
+                  const dy = segment.y - eaterY;
+                  const angle = Math.atan2(dy, dx) + (Math.random() - 0.5) * 0.5;
+                  const speed = BLOB_SPEED_MIN + Math.random() * (BLOB_SPEED_MAX - BLOB_SPEED_MIN);
+                  newBlobs.push(new Blob(segment.x, segment.y, tailRadius, speed * 0.05, angle));
+                }
+              });
+            });
+            creature.destroy(currentTime);
+            return false;
+          }
+          return true;
+        }
+        return true;
+      });
+
+      creatures = filteredCreatures.concat(newBlobs);
+    }
+
+    function animate() {
+      frameCount++;
+    
+      const currentTime = performance.now();
+      updateBackground(currentTime);
+
+      updateBreeze();
+      const breezeX = Math.cos(breezeAngle) * breezeSpeed;
+      const breezeY = Math.sin(breezeAngle) * breezeSpeed;
+      
+      spawnCreatures();
+
+      specks.forEach(speck => {
+        speck.update(breezeX, breezeY);
+        speck.draw();
+      });
+
+      // Update all creatures first
+      creatures.forEach(creature => {
+        creature.update(breezeX, breezeY, currentTime);
+      });
+
+      // Draw in order - Shadows first (behind everything)
+      creatures.filter(c => c instanceof Shadow).forEach(shadow => {
+        shadow.draw(currentTime);
+      });
+
+      creatures.filter(c => c instanceof Blob).forEach(blob => {
+        blob.draw(currentTime);
+      });
+
+      creatures.filter(c => c instanceof Muncher).forEach(muncher => {
+        muncher.draw(currentTime);
+      });
+      creatures.filter(c => c instanceof Coral).forEach(coral => {
+        coral.draw(currentTime);
+      });
+
+      creatures.filter(c => c instanceof Eater).forEach(eater => {
+        eater.draw(currentTime);
+      });
+
+      // Update and draw ripples
+      ripples = ripples.filter(ripple => {
+        const isActive = ripple.update(currentTime);
+        ripple.draw();
+        return isActive;
+      });
+
+      checkCollisions(currentTime);
+
+      // Update average counts and size stats
+      const blobCount = creatures.filter(c => c instanceof Blob).length;
+      const muncherCount = creatures.filter(c => c instanceof Muncher).length;
+      const coralCount = creatures.filter(c => c instanceof Coral).length;
+      const eaterCount = creatures.filter(c => c instanceof Eater).length;
+      const shadowCount = creatures.filter(c => c instanceof Shadow).length;
+
+      avgCounts.Blob.total += blobCount;
+      avgCounts.Muncher.total += muncherCount;
+      avgCounts.Coral.total += coralCount;
+      avgCounts.Eater.total += eaterCount;
+      avgCounts.Shadow.total += shadowCount;
+      avgCounts.Blob.frames++;
+      avgCounts.Muncher.frames++;
+      avgCounts.Coral.frames++;
+      avgCounts.Eater.frames++;
+      avgCounts.Shadow.frames++;
+
+      avgCounts.Blob.avg = avgCounts.Blob.total / avgCounts.Blob.frames;
+      avgCounts.Muncher.avg = avgCounts.Muncher.total / avgCounts.Muncher.frames;
+      avgCounts.Coral.avg = avgCounts.Coral.total / avgCounts.Coral.frames;
+      avgCounts.Eater.avg = avgCounts.Eater.total / avgCounts.Eater.frames;
+      avgCounts.Shadow.avg = avgCounts.Shadow.total / avgCounts.Shadow.frames;
+
+      // Reset size stats each frame and recalculate
+      sizeStats.Blob.total = 0;
+      sizeStats.Blob.count = 0;
+      sizeStats.Muncher.total = 0;
+      sizeStats.Muncher.count = 0;
+      sizeStats.Coral.total = 0;
+      sizeStats.Coral.count = 0;
+      sizeStats.Eater.total = 0;
+      sizeStats.Eater.count = 0;
+      sizeStats.Shadow.total = 0;
+      sizeStats.Shadow.count = 0;
+
+      creatures.forEach(creature => {
+        const type = creature.constructor.name;
+        sizeStats[type].total += creature.radius;
+        sizeStats[type].count++;
+        sizeStats[type].max = Math.max(sizeStats[type].max, creature.radius);
+      });
+
+      sizeStats.Blob.avg = sizeStats.Blob.count > 0 ? sizeStats.Blob.total / sizeStats.Blob.count : 0;
+      sizeStats.Muncher.avg = sizeStats.Muncher.count > 0 ? sizeStats.Muncher.total / sizeStats.Muncher.count : 0;
+      sizeStats.Coral.avg = sizeStats.Coral.count > 0 ? sizeStats.Coral.total / sizeStats.Coral.count : 0;
+      sizeStats.Eater.avg = sizeStats.Eater.count > 0 ? sizeStats.Eater.total / sizeStats.Eater.count : 0;
+      sizeStats.Shadow.avg = sizeStats.Shadow.count > 0 ? sizeStats.Shadow.total / sizeStats.Shadow.count : 0;
+
+      updateDebugInfo();
+      lastTime = currentTime;
+      
+      requestAnimationFrame(animate);
+    }
+
+    window.addEventListener('resize', () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      creatures.forEach(creature => {
+        if (creature.x > canvas.width) creature.x = canvas.width - creature.radius;
+        if (creature.y > canvas.height) creature.y = canvas.height - creature.radius;
+      });
+      specks.forEach(speck => {
+        if (speck.x > canvas.width) speck.x = canvas.width - speck.radius;
+        if (speck.y > canvas.height) speck.y = canvas.height - speck.radius;
+      });
+    });
+
+    window.addEventListener('keydown', (event) => {
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        showDebugInfo = !showDebugInfo;
+        debugInfoDiv.style.display = showDebugInfo ? 'block' : 'none';
+        infoBarDiv.style.display = showDebugInfo ? 'block' : 'none';
+        return;
+      }
+      
+      const x = Math.random() * canvas.width;
+      const y = Math.random() * canvas.height;
+      
+      if (event.key.toLowerCase() === '=') {
+        bbright+=1;
+      }
+      else if (event.key.toLowerCase() === '-') {
+        bbright-=1;
+      }      
+      
+      if (event.key.toLowerCase() === 'e') {
+        creatures.push(new Eater(x, y));
+      }
+      else if (event.key.toLowerCase() === 'c') {
+        creatures.push(new Coral(x, y));
+      }
+      else if (event.key.toLowerCase() === 'm') {
+        creatures.push(new Muncher(x, y));
+      }
+      else if (event.key.toLowerCase() === 'b') {
+        for (let i = 0; i < 5; i++) {
+          const bx = Math.random() * canvas.width;
+          const by = Math.random() * canvas.height;
+          creatures.push(new Blob(bx, by));          
+        }
+      }
+      else if (event.key.toLowerCase() === 's') {
+        creatures.push(new Shadow());
+      }
+    });
+
+    window.addEventListener('click', (event) => {
+      ripples.push(new Ripple(event.clientX, event.clientY, 200));
+    });
+    
+    animate();
+  </script>
+</body>
+</html>

@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<!--
+  All We Are Is Grok in the Wind
+  
+  Created by: Grok and @justme_3k
+  
+  Date: March 04, 2025
+  
+  This code is being worked on by me and Grok.  Grok should read it in and the just say now what?
+  
+  Description: A dynamic noise generator with 16 bandpass-filtered white noise bands, each featuring adjustable frequency (20-6000 Hz), gain (-0.5 to 1.5), LFO period (10-200s), and LFO depth (0-1), with random LFO start phases, mouse wheel fine-tuning on all sliders, and a 500x300px scrolling spectrogram visualizing the 20-6000 Hz range. Now includes a 396x300px gain history canvas showing 5 seconds of raw gain values (10 samples/sec, 50 total) colored from red to purple over 300px, with grey reference lines at 0 and 1 in foreground, lines drawn only for active bands flowing from the left of a 96px-wide bar graph on the right showing only active bands (4px wide, 2px spacing, 6px per band) with matching colored numbers on top, bars drawn from 0-1 (post-waveshaper), band divs with grey outlines and a larger numbered colored square indicator.
+
+  Collaboration History:
+  - Initial Setup: Created a noise generator with 16 bandpass filters, sliders for frequency (20-6000 Hz), gain, LFO period, and depth, plus a scrolling spectrogram (1000x300px).
+  - Zoomed Bands: Adjusted spectrogram to focus on 20-6000 Hz range over 300px height.
+  - Gain Range: Changed gain from 0-1 to -50-150, then corrected to -0.5-1.5, with LFO depth 0-1; waveshaper clamps raw values (e.g., -0.75 to 0.25) to 0-1 without normalization.
+  - LFO Phase: Added random start phase (0-2π) for each LFO on play to desynchronize bands.
+  - Mouse Wheel: Added fine-tuning to all sliders: freq (±1 Hz), gain (±0.01), LFO period (±1s), LFO depth (±0.01), global gain (±0.01), global Q (±0.1).
+  - Gain History: Added 300x300px canvas showing 5 seconds of raw gain history (-0.5 to 1.5) for 16 bands, colored red to purple.
+  - Added 96px bar graph (4px bars, 2px spacing) on right with matching colored numbers on top, expanded canvas to 396x300px, bars only for active bands with 0-1 clamped values.
+  - Desynchronized Noise: Updated to use unique noise buffers with random lengths (5-6s) per band and random start offsets to prevent loop artifacting.
+  - Current State: 500x300px spectrogram, 396x300px gain history (10 samples/sec, 50 total over 300px) with grey 0/1 lines in front, 1px dots, -0.5-1.5 gain (lines), 0-1 LFO depth, random LFO phases, full slider wheel control, grey band divs with larger bold numbered color squares, 96px bar graph on right with matching colored numbers for active bands only, fully animated, desynchronized noise loops with 5-6s durations.
+
+  Code Format:    
+    - 2-space tabs, CR before and after opening curly brackets
+    - whenever we do code updates, give the full code as output
+    - code should be output in a code block
+    - always print this top comment header with the code
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>All We Are Is Grok in the Wind</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 10px auto;
+      max-width: 1200px;
+      background-color: #1a1a1a;
+      color: #e0e0e0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    h1 {
+      text-align: center;
+    }
+    #controls-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 10px;
+      flex-wrap: nowrap;
+    }
+    #global-controls {
+      display: flex;
+      align-items: center;
+      margin-right: 10px;
+    }
+    .band {
+      margin-bottom: 5px;
+      padding: 5px;
+      background-color: #2a2a2a;
+      border-radius: 3px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      border: 1px solid #666;
+    }
+    .color-square {
+      width: 18px;
+      height: 18px;
+      border-radius: 3px;
+      margin-left: 2px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: bold;
+      color: #222222;
+    }
+    label {
+      margin: 0 5px;
+      color: #b0b0b0;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+    }
+    button {
+      padding: 8px 16px;
+      font-size: 14px;
+      margin: 0 5px;
+      background-color: #3a3a3a;
+      color: #e0e0e0;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #4a4a4a;
+    }
+    input[type="range"] {
+      accent-color: #00aaff;
+      margin: 0 5px;
+    }
+    input[type="range"].freq {
+      width: 200px;
+    }
+    input[type="range"].gain {
+      width: 200px;
+    }
+    input[type="range"].global {
+      width: 150px;
+    }
+    input[type="range"].lfo {
+      width: 100px;
+    }
+    span {
+      font-size: 12px;
+      min-width: 40px;
+    }
+    #visualization-container {
+      display: flex;
+      gap: 20px;
+      margin-top: 20px;
+    }
+    #spectrogram, #gain-history {
+      background-color: #000;
+      border: 1px solid #333;
+    }
+    #spectrogram {
+      width: 500px;
+      height: 300px;
+    }
+    #gain-history {
+      width: 396px;
+      height: 300px;
+    }
+    #file-input {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <h1>All We Are Is Grok in the Wind</h1>
+  <div id="controls-container">
+    <div id="global-controls">
+      <label>Global Volume: <input type="range" class="global" min="0" max="1" step="0.01" value="0.5" id="global-gain"></label>
+      <span id="global-gain-value">0.5</span>
+      <label>Global Q: <input type="range" class="global" min="0.1" max="30" step="0.1" value="2" id="global-q"></label>
+      <span id="global-q-value">2</span>
+    </div>
+    <button id="toggleAudio">Play</button>
+    <button id="allMute">All Mute</button>
+    <button id="resetAll">Reset All</button>
+    <button id="saveFile">Save</button>
+    <label for="file-input"><button id="loadFileBtn">Load</button></label>
+    <button id="randomize">Random</button>
+    <input type="file" id="file-input" accept=".json">
+  </div>
+  <div id="bands"></div>
+  <div id="visualization-container">
+    <canvas id="spectrogram" width="500" height="300"></canvas>
+    <canvas id="gain-history" width="396" height="300"></canvas>
+  </div>
+
+  <script>
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+    const numBands = 16
+    let isPlaying = false
+    let noiseSources = []
+    let bandpassFilters = []
+    let gainNodes = []
+    let lfoNodes = []
+    let lfoGainNodes = []
+    let constantNodes = []
+    let waveShaperNodes = []
+    let noiseBuffers = [] // Store buffers for random offset calculation
+    const globalGain = audioCtx.createGain()
+    globalGain.gain.value = 0.5
+    let animationFrameId = null
+
+    const analyser = audioCtx.createAnalyser()
+    analyser.fftSize = 1024
+    analyser.smoothingTimeConstant = 0
+    globalGain.connect(analyser)
+    analyser.connect(audioCtx.destination)
+
+    const minFreq = 20
+    const maxFreq = 6000
+    const defaultFrequencies = Array.from(
+      { length: numBands },
+      (_, i) => minFreq * Math.pow(maxFreq / minFreq, i / (numBands - 1))
+    ).map(Math.round)
+
+    const defaultSettings = {
+      "globalGain": 0.5,
+      "globalQ": 2,
+      "bands": [
+        {"freq": 20, "gain": 0, "lfoFreq": 10, "lfoDepth": 0},
+        {"freq": 29, "gain": 0, "lfoFreq": 10, "lfoDepth": 0},
+        {"freq": 43, "gain": 0, "lfoFreq": 10, "lfoDepth": 0},
+        {"freq": 63, "gain": 0, "lfoFreq": 10, "lfoDepth": 0},
+        {"freq": 92, "gain": 0, "lfoFreq": 10, "lfoDepth": 0},
+        {"freq": 134, "gain": 0.15, "lfoFreq": 168, "lfoDepth": 0.1},
+        {"freq": 196, "gain": 0, "lfoFreq": 10, "lfoDepth": 0},
+        {"freq": 286, "gain": 0.9, "lfoFreq": 48, "lfoDepth": 0.15},
+        {"freq": 419, "gain": 0.23, "lfoFreq": 78, "lfoDepth": 0.25},
+        {"freq": 613, "gain": 0.23, "lfoFreq": 114, "lfoDepth": 0.25},
+        {"freq": 896, "gain": 0.15, "lfoFreq": 10, "lfoDepth": 0.09},
+        {"freq": 1311, "gain": -0.5, "lfoFreq": 73, "lfoDepth": 1},
+        {"freq": 1917, "gain": 0, "lfoFreq": 34, "lfoDepth": 0},
+        {"freq": 2805, "gain": -0.03, "lfoFreq": 53, "lfoDepth": 0.11},
+        {"freq": 4102, "gain": -0.05, "lfoFreq": 103, "lfoDepth": 0.15},
+        {"freq": 6000, "gain": 0, "lfoFreq": 10, "lfoDepth": 0}
+      ]
+    }
+
+    const spectrogramCanvas = document.getElementById('spectrogram')
+    const spectrogramCtx = spectrogramCanvas.getContext('2d')
+    const spectrogramWidth = spectrogramCanvas.width
+    const spectrogramHeight = spectrogramCanvas.height
+    const freqData = new Uint8Array(analyser.frequencyBinCount)
+    let spectrogramData = []
+
+    const gainCanvas = document.getElementById('gain-history')
+    const gainCtx = gainCanvas.getContext('2d')
+    const gainWidth = gainCanvas.width // 396px
+    const gainHeight = gainCanvas.height
+    let bandHistories = {} // { [bandId]: { bandId, isActive, history: [] } }
+    const historySeconds = 5
+    const samplesPerSecond = 10
+    const totalSamples = historySeconds * samplesPerSecond
+    let lastSampleTime = 0
+    const historyWidth = 300 // History lines span 300px
+    const barGraphWidth = 96 // 16 bands * (4px bar + 2px space) = 96px
+    const barWidth = 4
+    const barSpacing = 2
+
+    spectrogramCanvas.style.width = `${spectrogramWidth}px`
+    spectrogramCanvas.style.height = `${spectrogramHeight}px`
+    gainCanvas.style.width = `${gainWidth}px`
+    gainCanvas.style.height = `${gainHeight}px`
+
+    function createClampingCurve()
+    {
+      const samples = 44100
+      const curve = new Float32Array(samples)
+      const minInput = -1.5
+      const maxInput = 1.5
+
+      for (let i = 0; i < samples; i++) {
+        const x = (i / (samples - 1)) * (maxInput - minInput) + minInput
+        curve[i] = Math.max(0, Math.min(1, x))
+      }
+      return curve
+    }
+
+    function createWhiteNoiseBuffer(bandIndex)
+    {
+      const baseDuration = 5 // Minimum 5 seconds
+      const randomDuration = baseDuration + Math.random() // 5 to 6 seconds
+      const bufferSize = Math.round(randomDuration * audioCtx.sampleRate)
+      const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate)
+      const data = buffer.getChannelData(0)
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = Math.random() * 2 - 1
+      }
+      return buffer
+    }
+
+    const toggleButton = document.getElementById('toggleAudio')
+    toggleButton.addEventListener('click', () => {
+      if (!isPlaying) {
+        if (audioCtx.state === 'suspended') {
+          audioCtx.resume()
+        }
+        startAudio()
+        toggleButton.textContent = 'Pause'
+        isPlaying = true
+      } else {
+        pauseAudio()
+        toggleButton.textContent = 'Play'
+        isPlaying = false
+      }
+    })
+
+    const allMuteButton = document.getElementById('allMute')
+    allMuteButton.addEventListener('click', () => {
+      gainNodes.forEach((gainNode, i) => {
+        constantNodes[i].offset.value = 0
+        document.getElementById(`gain-${i}`).value = 0
+        document.getElementById(`gain-value-${i}`).textContent = '0'
+      })
+      autoSaveSettings()
+    })
+
+    const resetAllButton = document.getElementById('resetAll')
+    resetAllButton.addEventListener('click', () => {
+      globalGainSlider.value = 0.5
+      globalGain.gain.value = 0.5
+      globalGainValue.textContent = '0.5'
+
+      globalQSlider.value = 2
+      bandpassFilters.forEach(filter => filter.Q.value = 2)
+      globalQValue.textContent = '2.0'
+
+      for (let i = 0; i < numBands; i++) {
+        const freqSlider = document.getElementById(`freq-${i}`)
+        const gainSlider = document.getElementById(`gain-${i}`)
+        const lfoFreqSlider = document.getElementById(`lfo-freq-${i}`)
+        const lfoLevelSlider = document.getElementById(`lfo-level-${i}`)
+        
+        freqSlider.value = defaultFrequencies[i]
+        bandpassFilters[i].frequency.value = defaultFrequencies[i]
+        document.getElementById(`freq-value-${i}`).textContent = `${defaultFrequencies[i]} Hz`
+
+        gainSlider.value = 0
+        constantNodes[i].offset.value = 0
+        document.getElementById(`gain-value-${i}`).textContent = '0'
+
+        lfoFreqSlider.value = 10
+        lfoNodes[i].frequency.value = 1 / 10
+        document.getElementById(`lfo-freq-value-${i}`).textContent = '10'
+
+        lfoLevelSlider.value = 0
+        lfoGainNodes[i].gain.value = 0
+        document.getElementById(`lfo-level-value-${i}`).textContent = '0.00'
+      }
+      autoSaveSettings()
+    })
+
+    const randomizeButton = document.getElementById('randomize')
+    randomizeButton.addEventListener('click', () => {
+      for (let i = 0; i < numBands; i++) {
+        const gainSlider = document.getElementById(`gain-${i}`)
+        const lfoFreqSlider = document.getElementById(`lfo-freq-${i}`)
+        const lfoLevelSlider = document.getElementById(`lfo-level-${i}`)
+
+        const newGain = -0.5 + Math.random() * 2 // -0.5 to 1.5
+        gainSlider.value = newGain
+        constantNodes[i].offset.value = newGain
+        document.getElementById(`gain-value-${i}`).textContent = newGain.toFixed(2)
+
+        const newLfoFreq = 10 + Math.floor(Math.random() * 191) // 10 to 200
+        lfoFreqSlider.value = newLfoFreq
+        lfoNodes[i].frequency.value = 1 / newLfoFreq
+        document.getElementById(`lfo-freq-value-${i}`).textContent = newLfoFreq
+
+        const newLfoDepth = Math.random() // 0 to 1
+        lfoLevelSlider.value = newLfoDepth
+        lfoGainNodes[i].gain.value = newLfoDepth
+        document.getElementById(`lfo-level-value-${i}`).textContent = newLfoDepth.toFixed(2)
+      }
+      autoSaveSettings()
+    })
+
+    function startAudio()
+    {
+      if (!noiseSources.length) {
+        setupBands() // Initial setup only if not already created
+      }
+
+      noiseSources.forEach((source, i) => {
+        if (!source.started) {
+          const bufferDuration = noiseBuffers[i].duration
+          const randomOffset = Math.random() * bufferDuration
+          source.start(0, randomOffset)
+          source.started = true
+        }
+      })
+
+      lfoNodes.forEach((lfo, i) => {
+        if (!lfo.started) {
+          const randomPhase = Math.random() * 2 * Math.PI
+          const period = 1 / lfo.frequency.value
+          const timeOffset = (randomPhase / (2 * Math.PI)) * period
+          lfo.start(0, timeOffset)
+          lfo.started = true
+        }
+      })
+
+      constantNodes.forEach((constant, i) => {
+        if (!constant.started) {
+          constant.start()
+          constant.started = true
+        }
+      })
+
+      lastSampleTime = audioCtx.currentTime
+      if (!animationFrameId) {
+        animationFrameId = requestAnimationFrame(drawVisualizations)
+      }
+    }
+
+    function pauseAudio()
+    {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId)
+        animationFrameId = null
+      }
+      audioCtx.suspend()
+    }
+
+    function setupBands()
+    {
+      for (let i = 0; i < numBands; i++) {
+        if (!document.getElementById(`freq-${i}`)) {
+          const bandDiv = document.createElement('div')
+          bandDiv.className = 'band'
+          bandDiv.innerHTML = `
+            <div class="color-square" style="background-color: ${getBandColor(i)};">${i}</div>
+            <label>Freq: <input type="range" class="freq" min="20" max="6000" value="${defaultFrequencies[i]}" id="freq-${i}"></label>
+            <span id="freq-value-${i}">${defaultFrequencies[i]} Hz</span>
+            <label>Gain: <input type="range" class="gain" min="-0.5" max="1.5" step="0.01" value="0" id="gain-${i}"></label>
+            <span id="gain-value-${i}">0</span>
+            <label>LFO Period (s): <input type="range" class="lfo" min="10" max="200" step="1" value="10" id="lfo-freq-${i}"></label>
+            <span id="lfo-freq-value-${i}">10</span>
+            <label>LFO Depth: <input type="range" class="lfo" min="0" max="1" step="0.01" value="0" id="lfo-level-${i}"></label>
+            <span id="lfo-level-value-${i}">0</span>
+          `
+          document.getElementById('bands').appendChild(bandDiv)
+        }
+
+        const noiseBuffer = createWhiteNoiseBuffer(i)
+        noiseBuffers.push(noiseBuffer)
+        const noiseSource = audioCtx.createBufferSource()
+        noiseSource.buffer = noiseBuffer
+        noiseSource.loop = true
+
+        const bandpassFilter = audioCtx.createBiquadFilter()
+        bandpassFilter.type = 'bandpass'
+        bandpassFilter.frequency.value = defaultFrequencies[i]
+        bandpassFilter.Q.value = 2
+
+        const gainNode = audioCtx.createGain()
+        gainNode.gain.value = 0
+
+        const constantNode = audioCtx.createConstantSource()
+        constantNode.offset.value = 0
+
+        const lfo = audioCtx.createOscillator()
+        lfo.type = 'sine'
+        lfo.frequency.value = 1 / 10
+
+        const lfoGain = audioCtx.createGain()
+        lfoGain.gain.value = 0
+
+        const waveShaper = audioCtx.createWaveShaper()
+        waveShaper.curve = createClampingCurve()
+
+        noiseSource.connect(bandpassFilter)
+        bandpassFilter.connect(gainNode)
+        gainNode.connect(globalGain)
+
+        constantNode.connect(waveShaper)
+        lfo.connect(lfoGain)
+        lfoGain.connect(waveShaper)
+        waveShaper.connect(gainNode.gain)
+
+        noiseSources.push(noiseSource)
+        bandpassFilters.push(bandpassFilter)
+        gainNodes.push(gainNode)
+        lfoNodes.push(lfo)
+        lfoGainNodes.push(lfoGain)
+        constantNodes.push(constantNode)
+        waveShaperNodes.push(waveShaper)
+
+        const freqSlider = document.getElementById(`freq-${i}`)
+        const freqValue = document.getElementById(`freq-value-${i}`)
+        const gainSlider = document.getElementById(`gain-${i}`)
+        const gainValue = document.getElementById(`gain-value-${i}`)
+        const lfoFreqSlider = document.getElementById(`lfo-freq-${i}`)
+        const lfoFreqValue = document.getElementById(`lfo-freq-value-${i}`)
+        const lfoLevelSlider = document.getElementById(`lfo-level-${i}`)
+        const lfoLevelValue = document.getElementById(`lfo-level-value-${i}`)
+
+        freqSlider.addEventListener('input', () => {
+          const value = parseInt(freqSlider.value)
+          bandpassFilter.frequency.value = value
+          freqValue.textContent = `${value} Hz`
+          autoSaveSettings()
+        })
+
+        freqSlider.addEventListener('wheel', (e) => {
+          e.preventDefault()
+          const currentValue = parseInt(freqSlider.value)
+          const delta = e.deltaY < 0 ? 1 : -1
+          const newValue = Math.max(20, Math.min(6000, currentValue + delta))
+          freqSlider.value = newValue
+          bandpassFilter.frequency.value = newValue
+          freqValue.textContent = `${newValue} Hz`
+          autoSaveSettings()
+        })
+
+        gainSlider.addEventListener('input', () => {
+          const value = parseFloat(gainSlider.value)
+          constantNode.offset.value = value
+          gainValue.textContent = value.toFixed(2)
+          autoSaveSettings()
+        })
+
+        gainSlider.addEventListener('wheel', (e) => {
+          e.preventDefault()
+          const currentValue = parseFloat(gainSlider.value)
+          const delta = e.deltaY < 0 ? 0.01 : -0.01
+          const newValue = Math.max(-0.5, Math.min(1.5, currentValue + delta))
+          gainSlider.value = newValue
+          constantNode.offset.value = newValue
+          gainValue.textContent = newValue.toFixed(2)
+          autoSaveSettings()
+        })
+
+        lfoFreqSlider.addEventListener('input', () => {
+          const period = parseInt(lfoFreqSlider.value)
+          lfo.frequency.value = 1 / period
+          lfoFreqValue.textContent = period
+          autoSaveSettings()
+        })
+
+        lfoFreqSlider.addEventListener('wheel', (e) => {
+          e.preventDefault()
+          const currentValue = parseInt(lfoFreqSlider.value)
+          const delta = e.deltaY < 0 ? 1 : -1
+          const newValue = Math.max(10, Math.min(200, currentValue + delta))
+          lfoFreqSlider.value = newValue
+          lfo.frequency.value = 1 / newValue
+          lfoFreqValue.textContent = newValue
+          autoSaveSettings()
+        })
+
+        lfoLevelSlider.addEventListener('input', () => {
+          const value = parseFloat(lfoLevelSlider.value)
+          lfoGain.gain.value = value
+          lfoLevelValue.textContent = value.toFixed(2)
+          autoSaveSettings()
+        })
+
+        lfoLevelSlider.addEventListener('wheel', (e) => {
+          e.preventDefault()
+          const currentValue = parseFloat(lfoLevelSlider.value)
+          const delta = e.deltaY < 0 ? 0.01 : -0.01
+          const newValue = Math.max(0, Math.min(1, currentValue + delta))
+          lfoLevelSlider.value = newValue
+          lfoGain.gain.value = newValue
+          lfoLevelValue.textContent = newValue.toFixed(2)
+          autoSaveSettings()
+        })
+      }
+    }
+
+    const globalGainSlider = document.getElementById('global-gain')
+    const globalGainValue = document.getElementById('global-gain-value')
+    const globalQSlider = document.getElementById('global-q')
+    const globalQValue = document.getElementById('global-q-value')
+
+    globalGainSlider.addEventListener('input', () => {
+      const value = parseFloat(globalGainSlider.value)
+      globalGain.gain.value = value
+      globalGainValue.textContent = value.toFixed(2)
+      autoSaveSettings()
+    })
+
+    globalGainSlider.addEventListener('wheel', (e) => {
+      e.preventDefault()
+      const currentValue = parseFloat(globalGainSlider.value)
+      const delta = e.deltaY < 0 ? 0.01 : -0.01
+      const newValue = Math.max(0, Math.min(1, currentValue + delta))
+      globalGainSlider.value = newValue
+      globalGain.gain.value = newValue
+      globalGainValue.textContent = newValue.toFixed(2)
+      autoSaveSettings()
+    })
+
+    globalQSlider.addEventListener('input', () => {
+      const value = parseFloat(globalQSlider.value)
+      bandpassFilters.forEach(filter => filter.Q.value = value)
+      globalQValue.textContent = value.toFixed(1)
+      autoSaveSettings()
+    })
+
+    globalQSlider.addEventListener('wheel', (e) => {
+      e.preventDefault()
+      const currentValue = parseFloat(globalQSlider.value)
+      const delta = e.deltaY < 0 ? 0.1 : -0.1
+      const newValue = Math.max(0.1, Math.min(30, currentValue + delta))
+      globalQSlider.value = newValue
+      bandpassFilters.forEach(filter => filter.Q.value = newValue)
+      globalQValue.textContent = newValue.toFixed(1)
+      autoSaveSettings()
+    })
+
+    function interpolateColor(value)
+    {
+      const t = value / 255
+      let r, g, b
+
+      if (t <= 0.5) {
+        const t1 = t * 2
+        r = Math.round(0 * t1 + 0 * (1 - t1))
+        g = Math.round(128 * t1 + 0 * (1 - t1))
+        b = Math.round(0 * t1 + 64 * (1 - t1))
+      } else {
+        const t2 = (t - 0.5) * 2
+        r = Math.round(255 * t2 + 0 * (1 - t2))
+        g = Math.round(255 * t2 + 128 * (1 - t2))
+        b = Math.round(0 * t2 + 0 * (1 - t2))
+      }
+
+      return `rgb(${r}, ${g}, ${b})`
+    }
+
+    function getBandColor(index)
+    {
+      const hue = (index / (numBands - 1)) * 300
+      return `hsl(${hue}, 100%, 50%)`
+    }
+
+    function drawVisualizations()
+    {
+      if (!isPlaying) return
+
+      // Spectrogram
+      analyser.getByteFrequencyData(freqData)
+      spectrogramData.push(new Uint8Array(freqData))
+      if (spectrogramData.length > spectrogramWidth) {
+        spectrogramData.shift()
+      }
+
+      const dpr = window.devicePixelRatio || 1
+      spectrogramCanvas.width = spectrogramWidth * dpr
+      spectrogramCanvas.height = spectrogramHeight * dpr
+      spectrogramCtx.scale(dpr, dpr)
+      spectrogramCanvas.style.width = `${spectrogramWidth}px`
+      spectrogramCanvas.style.height = `${spectrogramHeight}px`
+
+      spectrogramCtx.clearRect(0, 0, spectrogramWidth, spectrogramHeight)
+      const maxFreqBin = Math.floor(6000 / (audioCtx.sampleRate / 2) * analyser.frequencyBinCount)
+      const minFreqBin = Math.floor(20 / (audioCtx.sampleRate / 2) * analyser.frequencyBinCount)
+      const binRange = maxFreqBin - minFreqBin
+
+      for (let x = 0; x < spectrogramData.length; x++) {
+        const slice = spectrogramData[x]
+        for (let y = 0; y < spectrogramHeight; y++) {
+          const normalizedY = y / spectrogramHeight
+          const binIndex = Math.floor(minFreqBin + normalizedY * binRange)
+          const value = slice[binIndex]
+          spectrogramCtx.fillStyle = interpolateColor(value)
+          spectrogramCtx.fillRect(x, spectrogramHeight - y - 1, 1, 1)
+        }
+      }
+
+      // Gain History
+      const currentTime = audioCtx.currentTime
+      if (currentTime - lastSampleTime >= 0.1) { // 10 samples per second
+        for (let band = 0; band < numBands; band++) {
+          const baseGain = parseFloat(document.getElementById(`gain-${band}`).value)
+          const lfoDepth = parseFloat(document.getElementById(`lfo-level-${band}`).value)
+          const isActive = baseGain !== 0 || lfoDepth !== 0
+
+          if (!bandHistories[band]) {
+            bandHistories[band] = { bandId: band, isActive: false, history: [] }
+          }
+
+          bandHistories[band].isActive = isActive
+
+          if (isActive) {
+            const gain = constantNodes[band].offset.value + 
+                         (lfoGainNodes[band].gain.value * Math.sin(2 * Math.PI * lfoNodes[band].frequency.value * currentTime))
+            bandHistories[band].history.push(gain)
+            if (bandHistories[band].history.length > totalSamples) {
+              bandHistories[band].history.shift()
+            }
+          }
+        }
+        lastSampleTime = currentTime
+      }
+
+      gainCanvas.width = gainWidth * dpr
+      gainCanvas.height = gainHeight * dpr
+      gainCtx.scale(dpr, dpr)
+      gainCanvas.style.width = `${gainWidth}px`
+      gainCanvas.style.height = `${gainHeight}px`
+
+      gainCtx.clearRect(0, 0, gainWidth, gainHeight)
+
+      // Draw active bands history (0-300px, raw gain -0.5 to 1.5)
+      Object.values(bandHistories).forEach(bandData => {
+        if (bandData.isActive && bandData.history.length > 0) {
+          gainCtx.strokeStyle = getBandColor(bandData.bandId)
+          gainCtx.beginPath()
+          bandData.history.forEach((gain, x) => {
+            const normalizedGain = (gain + 0.5) / 2 // -0.5 to 1.5 -> 0 to 1
+            const y = gainHeight * (1 - normalizedGain)
+            const xPos = (x / (totalSamples - 1)) * historyWidth
+            if (x === 0) {
+              gainCtx.moveTo(xPos, y)
+            } else {
+              gainCtx.lineTo(xPos, y)
+            }
+          })
+          gainCtx.stroke()
+        }
+      })
+
+      // Draw bar graph for active bands (300-396px, clamped 0-1 drawn from 0 to 1 line)
+      const barGraphStartX = historyWidth
+      const yZero = gainHeight * (1 - (0 + 0.5) / 2) // 150px, raw gain = 0
+      const yOne = gainHeight * (1 - (1 + 0.5) / 2)  // 0px, raw gain = 1
+      for (let band = 0; band < numBands; band++) {
+        const baseGain = parseFloat(document.getElementById(`gain-${band}`).value)
+        const lfoDepth = parseFloat(document.getElementById(`lfo-level-${band}`).value)
+        const isActive = baseGain !== 0 || lfoDepth !== 0
+        const xPos = barGraphStartX + band * (barWidth + barSpacing)
+
+        if (isActive && bandHistories[band] && bandHistories[band].history.length > 0) {
+          const rawGain = bandHistories[band].history[bandHistories[band].history.length - 1]
+          const clampedGain = Math.max(0, Math.min(1, rawGain)) // Clamp to 0-1
+          const barHeight = clampedGain * (yZero - yOne) // Scale 0-1 to 150px (0 line to 1 line)
+          gainCtx.fillStyle = getBandColor(band)
+          gainCtx.fillRect(xPos, yZero - barHeight, barWidth, barHeight) // Start at 0 line, draw up
+          gainCtx.fillStyle = getBandColor(band) // Match number color to bar
+          gainCtx.font = '10px Arial'
+          gainCtx.textAlign = 'center'
+          gainCtx.fillText(band, xPos + barWidth / 2, yZero - barHeight - 2) // 2px above bar
+        }
+      }
+
+      // Draw grey reference lines at 0 and 1 (foreground)
+      gainCtx.strokeStyle = '#666'
+      gainCtx.beginPath()
+      gainCtx.moveTo(0, yZero)
+      gainCtx.lineTo(gainWidth, yZero)
+      gainCtx.moveTo(0, yOne)
+      gainCtx.lineTo(gainWidth, yOne)
+      gainCtx.stroke()
+
+      animationFrameId = requestAnimationFrame(drawVisualizations)
+    }
+
+    function getCurrentSettings()
+    {
+      const settings = {
+        globalGain: parseFloat(globalGainSlider.value),
+        globalQ: parseFloat(globalQSlider.value),
+        bands: []
+      }
+      for (let i = 0; i < numBands; i++) {
+        settings.bands.push({
+          freq: parseInt(document.getElementById(`freq-${i}`).value),
+          gain: parseFloat(document.getElementById(`gain-${i}`).value),
+          lfoFreq: parseInt(document.getElementById(`lfo-freq-${i}`).value),
+          lfoDepth: parseFloat(document.getElementById(`lfo-level-${i}`).value)
+        })
+      }
+      return settings
+    }
+
+    function applySettings(settings)
+    {
+      setupBands() // Ensure DOM elements exist before setting values
+      globalGainSlider.value = settings.globalGain
+      globalGain.gain.value = settings.globalGain
+      globalGainValue.textContent = settings.globalGain.toFixed(2)
+
+      globalQSlider.value = settings.globalQ
+      bandpassFilters.forEach(filter => filter.Q.value = settings.globalQ)
+      globalQValue.textContent = settings.globalQ.toFixed(1)
+
+      for (let i = 0; i < numBands; i++) {
+        const band = settings.bands[i]
+        const freqSlider = document.getElementById(`freq-${i}`)
+        const gainSlider = document.getElementById(`gain-${i}`)
+        const lfoFreqSlider = document.getElementById(`lfo-freq-${i}`)
+        const lfoLevelSlider = document.getElementById(`lfo-level-${i}`)
+        
+        freqSlider.value = band.freq
+        bandpassFilters[i].frequency.value = band.freq
+        document.getElementById(`freq-value-${i}`).textContent = `${band.freq} Hz`
+
+        gainSlider.value = band.gain
+        constantNodes[i].offset.value = band.gain
+        document.getElementById(`gain-value-${i}`).textContent = band.gain.toFixed(2)
+
+        lfoFreqSlider.value = band.lfoFreq
+        lfoNodes[i].frequency.value = 1 / band.lfoFreq
+        document.getElementById(`lfo-freq-value-${i}`).textContent = band.lfoFreq
+
+        lfoLevelSlider.value = band.lfoDepth
+        lfoGainNodes[i].gain.value = band.lfoDepth
+        document.getElementById(`lfo-level-value-${i}`).textContent = band.lfoDepth.toFixed(2)
+      }
+    }
+
+    function autoSaveSettings()
+    {
+      const settings = getCurrentSettings()
+      localStorage.setItem('noiseSettings', JSON.stringify(settings))
+    }
+
+    window.addEventListener('load', () => {
+      const saved = localStorage.getItem('noiseSettings')
+      if (saved) {
+        const settings = JSON.parse(saved)
+        applySettings(settings)
+      } else {
+        applySettings(defaultSettings)
+      }
+    })
+
+    const saveFileButton = document.getElementById('saveFile')
+    saveFileButton.addEventListener('click', () => {
+      const settings = getCurrentSettings()
+      const jsonStr = JSON.stringify(settings, null, 2)
+      const blob = new Blob([jsonStr], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'noise_settings.json'
+      a.click()
+      URL.revokeObjectURL(url)
+    })
+
+    const loadFileInput = document.getElementById('file-input')
+    loadFileInput.addEventListener('change', (event) => {
+      const file = event.target.files[0]
+      if (file) {
+        const reader = new FileReader()
+        reader.onload = (e) => {
+          try {
+            const settings = JSON.parse(e.target.result)
+            applySettings(settings)
+            autoSaveSettings()
+          } catch (err) {
+            alert('Error loading settings: ' + err.message)
+          }
+        }
+        reader.readAsText(file)
+      }
+    })
+
+    const loadFileButton = document.getElementById('loadFileBtn')
+    loadFileButton.addEventListener('click', () => {
+      loadFileInput.click()
+    })
+  </script>
+</body>
+</html>

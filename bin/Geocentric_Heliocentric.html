@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<!--
+    Grok3 Created File: Geocentric Solar System Simulation
+       (with a little help from justme_3k)
+       
+    Date: February 25-26, 2025
+    
+    Summary:
+    - Uses an HTML5 canvas (dynamic square size, fills screen) with a black background to simulate a geocentric solar system view.
+    - Earth stationary at center with fixed bluish-white swirls and faint atmosphere, Sun orbits Earth, planets orbit Sun with rotation, moons orbit planets.
+    - Distances fixed at 150 pixels per AU.
+    - Planet sizes 8–17 pixels, moons 3–5 pixels (scaled dynamically).
+    - 2000 static stars in screen space: 1000 base stars (alpha 0.28-0.40) + 1000 clustered stars (alpha 0.3-0.45), colored with white/yellow/blue hints, radius 0.5-1.8, recalculated on resize.
+    - 2000-point trails (every other frame) with line width adjusted by 1/scaleFactor for planets (no Sun trail implemented).
+    - Date display as unselectable HTML text at top of page, tied to Sun’s orbit from February 25, 2025, showing month and year.
+    - Zoom level display as unselectable HTML text at top right corner showing "<width in AU> AU (Z:zoomFactor)".
+    - Static title "A Geocentric View" with subtitle "Of Heliocentric Orbits" and instructions "Zoom: mouse wheel | Speed: Ctrl+Wheel | Pan: Click+Drag | Double-click: resets view" in upper left corner.
+    - Canvas centered, mouse wheel zooms around canvas center, Ctrl/Cmd adjusts base speed, dragging pans view (disabled when following a planet), double-click resets zoom/speed/offset/paths.
+    - Controls:
+      - Mouse wheel: Zooms in/out, adjusting offsets to keep center fixed (scaleFactor: 0.1–10).
+      - Ctrl/Cmd + wheel: Adjusts base speed (0.1–10).
+      - Drag: Pans view in screen space (no bounds clamping implemented), disabled when following a planet.
+      - Single click on planet: Follows that planet, centering it in view.
+      - Single click on empty space: Returns to static Earth-centered view.
+      - Double-click: Resets scaleFactor to 0.5, baseSpeed to 0.75, offsetX/Y to 0, clears trails, stops following.
+    - Time increment: baseSpeed / (1 * scaleFactor), using full scaleFactor for time.
+    - Mercury colored lightest grey with rust hint (#E0D9D0).
+    - Mars with 12 fixed brownish craters.
+    - Jupiter with a reddish equatorial spot.
+    - Saturn’s rings flattened horizontally, tilted with time, perpendicular to radius.
+    - Mouse cursor: Changes to pointer when over a clickable planet.
+-->
+<html>
+<head>
+    <title>Geocentric with Heliocentric Orbits and Trails</title>
+    <style>
+        body { 
+            background: #000; 
+            margin: 0; 
+            padding: 0; 
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+        #titleDisplay {
+            position: absolute;
+            top: 5px;
+            left: 10px;
+            color: #FFFFFF;
+            text-shadow: 2px 2px 4px #000000;
+            z-index: 10;
+            user-select: none;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            pointer-events: none;
+        }
+        .main-title {
+            font: 20px Arial;
+        }
+        .sub-title {
+            font: 16px Arial;
+        }
+        .instructions {
+            font: 12px Arial;
+        }
+        #dateDisplay {
+            color: #FFFFFF;
+            font: 20px Arial;
+            text-align: center;
+            padding: 5px 0;
+            text-shadow: 2px 2px 4px #000000;
+            z-index: 10;
+            user-select: none;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            pointer-events: none;
+        }
+        #zoomDisplay {
+            position: absolute;
+            top: 5px;
+            right: 10px;
+            color: #FFFFFF;
+            font: 20px Arial;
+            text-shadow: 2px 2px 4px #000000;
+            z-index: 10;
+            user-select: none;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            pointer-events: none;
+        }
+        canvas { 
+            background: #000; 
+            display: block; 
+        }
+    </style>
+</head>
+<body>
+    <div id="titleDisplay">
+        <span class="main-title">A Geocentric View</span>
+        <br>
+        <span class="sub-title">Of Heliocentric Orbits</span>
+        <br>
+        <span class="instructions">
+        Zoom: mouse wheel<br>
+        Speed: Ctrl+ Mouse Wheel<br>
+        Pan: Cick + Drag<br>
+        Double-click: resets view
+        </span>
+    </div>
+    <div id="dateDisplay"></div>
+    <div id="zoomDisplay"></div>
+    <canvas id="solarSystem"></canvas>
+    
+    <script>
+        const canvas = document.getElementById('solarSystem');
+        const ctx = canvas.getContext('2d');
+        const dateDisplay = document.getElementById('dateDisplay');
+        const zoomDisplay = document.getElementById('zoomDisplay');
+
+        const PLANET_COLORS = {
+            sun: '#FFD700',
+            mercury: '#E0D9D0',
+            venus: '#66FF66',
+            earth: '#00B7EB',
+            mars: '#FF4500',
+            jupiter: '#DEB887',
+            saturn: '#FF00FF',
+            uranus: '#D2B48C',
+            neptune: '#ADD8E6'
+        };
+        
+        const solarSystem = {
+            earth: { 
+                radius: 8, 
+                color: PLANET_COLORS.earth, 
+                orbitalPeriod: 365.25, 
+                rotationSpeed: 0.01083,
+                swirls: [
+                    { xOffset: 0.2, yOffset: 0.5, scale: 0.4 },
+                    { xOffset: -0.5, yOffset: -0.3, scale: 0.3 },
+                    { xOffset: 0.6, yOffset: -0.4, scale: 0.35 }
+                ]
+            },
+            sun: { 
+                radius: 18, 
+                distance: 1 * 150, 
+                speed: 0.01, 
+                color: PLANET_COLORS.sun, 
+                orbitalPeriod: 365.25, 
+                initialAngle: 0, 
+                rotationSpeed: 0.000432, 
+                trail: [] 
+            },
+            planets: [
+                { 
+                    name: 'Mercury', 
+                    radius: 8, 
+                    distance: 0.39 * 150, 
+                    speed: 0.04, 
+                    color: PLANET_COLORS.mercury, 
+                    orbitalPeriod: 87.97, 
+                    rotationSpeed: 0.000184, 
+                    initialAngle: 0, 
+                    moons: [], 
+                    trail: [] 
+                },
+                { 
+                    name: 'Venus', 
+                    radius: 8, 
+                    distance: 0.72 * 150, 
+                    speed: 0.015, 
+                    color: PLANET_COLORS.venus, 
+                    orbitalPeriod: 224.7, 
+                    rotationSpeed: 0.0000444, 
+                    initialAngle: 0, 
+                    moons: [], 
+                    trail: [] 
+                },
+                { 
+                    name: 'Mars', 
+                    radius: 8, 
+                    distance: 1.52 * 150, 
+                    speed: 0.008, 
+                    color: PLANET_COLORS.mars, 
+                    orbitalPeriod: 686.98, 
+                    rotationSpeed: 0.01052, 
+                    initialAngle: 0,
+                    moons: [
+                        { name: 'Phobos', radius: 3, distance: 15 * 1.2, speed: 0.15, color: '#A9A9A9', orbitalPeriod: 0.32, initialAngle: 0 },
+                        { name: 'Deimos', radius: 3, distance: 25 * 1.2, speed: 0.08, color: '#A9A9A9', orbitalPeriod: 1.26, initialAngle: 0 }
+                    ],
+                    craters: [
+                        { xOffset: 0.5, yOffset: 0.2, size: 0.15 },
+                        { xOffset: -0.3, yOffset: 0.6, size: 0.1 },
+                        { xOffset: 0.7, yOffset: -0.4, size: 0.12 },
+                        { xOffset: -0.6, yOffset: -0.2, size: 0.13 },
+                        { xOffset: 0.1, yOffset: 0.7, size: 0.11 },
+                        { xOffset: -0.5, yOffset: 0.4, size: 0.14 },
+                        { xOffset: 0.8, yOffset: 0.0, size: 0.1 },
+                        { xOffset: -0.2, yOffset: -0.6, size: 0.15 },
+                        { xOffset: 0.4, yOffset: -0.5, size: 0.12 },
+                        { xOffset: -0.7, yOffset: 0.1, size: 0.13 },
+                        { xOffset: 0.0, yOffset: 0.8, size: 0.11 },
+                        { xOffset: 0.3, yOffset: -0.7, size: 0.14 }
+                    ],
+                    trail: []
+                },
+                { 
+                    name: 'Jupiter', 
+                    radius: 17, 
+                    distance: 5.20 * 150, 
+                    speed: 0.002, 
+                    color: PLANET_COLORS.jupiter, 
+                    orbitalPeriod: 4332.59, 
+                    rotationSpeed: 0.02613, 
+                    initialAngle: 0,
+                    moons: [
+                        { name: 'Io', radius: 3, distance: 40 * 1.2, speed: 0.06, color: '#FFFF99', orbitalPeriod: 1.77, initialAngle: 0 },
+                        { name: 'Europa', radius: 3, distance: 50 * 1.2, speed: 0.04, color: '#E0FFFF', orbitalPeriod: 3.55, initialAngle: 0 },
+                        { name: 'Ganymede', radius: 5, distance: 60 * 1.2, speed: 0.03, color: '#D2B48C', orbitalPeriod: 7.15, initialAngle: 0 },
+                        { name: 'Callisto', radius: 5, distance: 70 * 1.2, speed: 0.02, color: '#808080', orbitalPeriod: 16.69, initialAngle: 0 }
+                    ],
+                    trail: []
+                },
+                { 
+                    name: 'Saturn', 
+                    radius: 14, 
+                    distance: 9.58 * 150, 
+                    speed: 0.0015, 
+                    color: PLANET_COLORS.saturn, 
+                    orbitalPeriod: 10759.22, 
+                    rotationSpeed: 0.02431, 
+                    initialAngle: 0,
+                    moons: [
+                        { name: 'Titan', radius: 5, distance: 50 * 1.2, speed: 0.03, color: '#FFA07A', orbitalPeriod: 15.95, initialAngle: 0 },
+                        { name: 'Enceladus', radius: 3, distance: 30 * 1.2, speed: 0.05, color: '#F0F8FF', orbitalPeriod: 1.37, initialAngle: 0 }
+                    ],
+                    trail: []
+                },
+                { 
+                    name: 'Uranus', 
+                    radius: 8, 
+                    distance: 19.18 * 150, 
+                    speed: 0.001, 
+                    color: PLANET_COLORS.uranus, 
+                    orbitalPeriod: 30688.5, 
+                    rotationSpeed: 0.01503, 
+                    initialAngle: 0,
+                    moons: [{ name: 'Titania', radius: 3, distance: 40 * 1.2, speed: 0.03, color: '#B0C4DE', orbitalPeriod: 8.71, initialAngle: 0 }],
+                    trail: []
+                },
+                { 
+                    name: 'Neptune', 
+                    radius: 8, 
+                    distance: 30.07 * 150, 
+                    speed: 0.0008, 
+                    color: PLANET_COLORS.neptune, 
+                    orbitalPeriod: 59800, 
+                    rotationSpeed: 0.01607, 
+                    initialAngle: 0,
+                    moons: [{ name: 'Triton', radius: 3, distance: 35 * 1.2, speed: 0.04, color: '#ADD8E6', orbitalPeriod: 5.88, initialAngle: 0 }],
+                    trail: []
+                }
+            ],
+            earthMoons: [
+                { name: 'Moon', radius: 3, distance: 20 * 1.2, speed: 0.1, color: '#D3D3D3', orbitalPeriod: 27.32, initialAngle: 0 }
+            ]
+        };
+
+        let time = 0;
+        let frameCount = 0;
+        let scaleFactor = 1;
+        let baseSpeed = 0.75;
+        let centerX, centerY;
+        let isDragging = false;
+        let lastX, lastY;
+        let offsetX = 0;
+        let offsetY = 0;
+        let mouseX = 0, mouseY = 0;
+        let followedBody = null;
+
+        function resizeCanvas() {
+            const size = (window.innerWidth + window.innerHeight)/2;
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            centerX = canvas.width / 2;
+            centerY = canvas.height / 2;
+            offsetX = 0;
+            offsetY = 0;
+            generateStars();
+        }
+
+        const stars = [];
+        function generateStars() {
+            stars.length = 0;
+
+            // 1000 base stars (normally distributed)
+            for (let i = 0; i < 1000; i++) {
+                const x = Math.random() * canvas.width;
+                const y = Math.random() * canvas.height;
+
+                const colorType = Math.random();
+                let r, g, b;
+                if (colorType < 0.33) { // White-ish
+                    r = 200 + Math.random() * 55;
+                    g = 200 + Math.random() * 55;
+                    b = 200 + Math.random() * 55;
+                } else if (colorType < 0.66) { // Yellow-ish
+                    r = 220 + Math.random() * 35;
+                    g = 180 + Math.random() * 45;
+                    b = 100 + Math.random() * 50;
+                } else { // Blue-ish
+                    r = 100 + Math.random() * 50;
+                    g = 150 + Math.random() * 50;
+                    b = 200 + Math.random() * 55;
+                }
+                const alpha = 0.28 + Math.random() * 0.12;
+
+                stars.push({
+                    x: x,
+                    y: y,
+                    radius: 0.5 + Math.random() * 1.3,
+                    color: `rgba(${r}, ${g}, ${b}, ${alpha})`
+                });
+            }
+
+            // 1000 clustered stars
+            const clusterCount = 50;
+            const starsPerCluster = 1000 / clusterCount;
+
+            for (let i = 0; i < clusterCount; i++) {
+                const clusterX = Math.random() * canvas.width;
+                const clusterY = Math.random() * canvas.height;
+
+                for (let j = 0; j < starsPerCluster; j++) {
+                    const angle = Math.random() * 2 * Math.PI;
+                    const radius = Math.random() * 50 * Math.exp(-Math.random());
+                    const x = clusterX + Math.cos(angle) * radius;
+                    const y = clusterY + Math.sin(angle) * radius;
+
+                    const colorType = Math.random();
+                    let r, g, b;
+                    if (colorType < 0.33) {
+                        r = 200 + Math.random() * 55;
+                        g = 200 + Math.random() * 55;
+                        b = 200 + Math.random() * 55;
+                    } else if (colorType < 0.66) {
+                        r = 220 + Math.random() * 35;
+                        g = 180 + Math.random() * 45;
+                        b = 100 + Math.random() * 50;
+                    } else {
+                        r = 100 + Math.random() * 50;
+                        g = 150 + Math.random() * 50;
+                        b = 200 + Math.random() * 55;
+                    }
+                    const alpha = 0.3 + Math.random() * 0.15;
+
+                    stars.push({
+                        x: Math.max(0, Math.min(canvas.width, x)),
+                        y: Math.max(0, Math.min(canvas.height, y)),
+                        radius: 0.5 + Math.random() * 1.3,
+                        color: `rgba(${r}, ${g}, ${b}, ${alpha})`
+                    });
+                }
+            }
+        }
+
+        const startDate = new Date(2025, 1, 25);
+        const epoch = new Date(2000, 0, 1);
+        const daysSinceEpoch = (startDate - epoch) / (1000 * 60 * 60 * 24);
+
+        solarSystem.sun.initialAngle = (daysSinceEpoch / solarSystem.sun.orbitalPeriod) * 2 * Math.PI;
+        solarSystem.planets.forEach(planet => {
+            planet.initialAngle = (daysSinceEpoch / planet.orbitalPeriod) * 2 * Math.PI;
+            planet.moons.forEach(moon => {
+                moon.initialAngle = (daysSinceEpoch / moon.orbitalPeriod) * 2 * Math.PI;
+            });
+        });
+        solarSystem.earthMoons.forEach(moon => {
+            moon.initialAngle = (daysSinceEpoch / moon.orbitalPeriod) * 2 * Math.PI;
+        });
+
+        const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+        function updateDate() {
+            const sunAngleProgress = time * solarSystem.sun.speed;
+            const orbitFraction = sunAngleProgress / (2 * Math.PI);
+            const daysPassed = orbitFraction * solarSystem.earth.orbitalPeriod;
+            const newDate = new Date(startDate.getTime() + daysPassed * 24 * 60 * 60 * 1000);
+            dateDisplay.textContent = `${months[newDate.getMonth()]} ${newDate.getFullYear()}`;
+        }
+
+        function updateZoomDisplay() {
+            const visibleWidthPixels = canvas.width / scaleFactor;
+            const visibleWidthAU = visibleWidthPixels / 150;
+            zoomDisplay.textContent = `${visibleWidthAU.toFixed(2)} AU (Z:${scaleFactor.toFixed(2)})`;
+        }
+
+        function drawSun(x, y) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(time * solarSystem.sun.rotationSpeed);
+
+            ctx.beginPath();
+            ctx.arc(0, 0, solarSystem.sun.radius, 0, Math.PI * 2);
+            ctx.fillStyle = solarSystem.sun.color;
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        function drawEarth(x, y) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(time * solarSystem.earth.rotationSpeed);
+
+            // Atmosphere (drawn first)
+            ctx.beginPath();
+            ctx.arc(0, 0, solarSystem.earth.radius + 1.55, 0, Math.PI * 2);
+            ctx.fillStyle = '#B0E0E680';
+            ctx.fill();
+
+            // Main body
+            ctx.beginPath();
+            ctx.arc(0, 0, solarSystem.earth.radius, 0, Math.PI * 2);
+            ctx.fillStyle = solarSystem.earth.color;
+            ctx.fill();
+
+            // Swirls (drawn on top)
+            ctx.globalAlpha = 0.8;
+            ctx.fillStyle = '#ffffff';
+            solarSystem.earth.swirls.forEach(swirl => {
+                ctx.beginPath();
+                ctx.moveTo(swirl.xOffset * solarSystem.earth.radius, swirl.yOffset * solarSystem.earth.radius);
+                ctx.quadraticCurveTo(
+                    swirl.xOffset * solarSystem.earth.radius + swirl.scale * solarSystem.earth.radius, 
+                    swirl.yOffset * solarSystem.earth.radius - swirl.scale * solarSystem.earth.radius,
+                    swirl.xOffset * solarSystem.earth.radius - swirl.scale * solarSystem.earth.radius * 0.5, 
+                    swirl.yOffset * solarSystem.earth.radius + swirl.scale * solarSystem.earth.radius * 0.5
+                );
+                ctx.quadraticCurveTo(
+                    swirl.xOffset * solarSystem.earth.radius - swirl.scale * solarSystem.earth.radius * 1.5, 
+                    swirl.yOffset * solarSystem.earth.radius + swirl.scale * solarSystem.earth.radius * 1.5,
+                    swirl.xOffset * solarSystem.earth.radius, 
+                    swirl.yOffset * solarSystem.earth.radius
+                );
+                ctx.closePath();
+                ctx.fill();
+            });
+
+            ctx.restore();
+        }
+
+        function drawPlanet(x, y, planet) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(time * planet.rotationSpeed);
+
+            ctx.beginPath();
+            ctx.arc(0, 0, planet.radius, 0, Math.PI * 2);
+            ctx.fillStyle = planet.color;
+            ctx.fill();
+
+            if (planet.name === 'Mars') {
+                ctx.save();
+                ctx.fillStyle = '#CC3700';
+                planet.craters.forEach(crater => {
+                    ctx.beginPath();
+                    ctx.arc(crater.xOffset * planet.radius, crater.yOffset * planet.radius, crater.size * planet.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+                ctx.restore();
+            }
+
+            if (planet.name === 'Jupiter') {
+                ctx.beginPath();
+                ctx.ellipse(planet.radius * 0.24, planet.radius * 0.26, planet.radius * 0.3, planet.radius * 0.15, 0, 0, Math.PI * 2);
+                ctx.fillStyle = '#FF4040';
+                ctx.fill();
+            }
+
+            if (planet.name === 'Saturn') {
+                ctx.beginPath();
+                const ringTilt = time * 0.01;
+                ctx.ellipse(0, 0, planet.radius * 1.5, planet.radius * 0.3, ringTilt, 0, Math.PI * 2);
+                ctx.fillStyle = '#D3D3D3';
+                ctx.fill();
+            }
+
+            ctx.restore();
+        }
+
+        function drawMoon(x, y, moon) {
+            ctx.save();
+            ctx.translate(x, y);
+
+            ctx.beginPath();
+            ctx.arc(0, 0, moon.radius, 0, Math.PI * 2);
+            ctx.fillStyle = moon.color;
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        function drawTrail(trail, color) {
+            if (trail.length < 2) return;
+            ctx.beginPath();
+            ctx.lineWidth = 1.5 / scaleFactor;
+            ctx.moveTo(trail[0].x, trail[0].y);
+            for (let i = 1; i < trail.length; i++) {
+                ctx.lineTo(trail[i].x, trail[i].y);
+            }
+            ctx.strokeStyle = `${color}80`;
+            ctx.stroke();
+        }
+
+        function drawStars() {
+            stars.forEach(star => {
+                ctx.beginPath();
+                ctx.arc(star.x, star.y, star.radius, 0, Math.PI * 2);
+                ctx.fillStyle = star.color;
+                ctx.fill();
+            });
+        }
+
+        function drawEarthAtCenter() {
+            drawEarth(centerX, centerY);
+        }
+
+        function drawSunOrbit() {
+            const sunAngle = solarSystem.sun.initialAngle + time * solarSystem.sun.speed;
+            const sunX = centerX + Math.cos(sunAngle) * solarSystem.sun.distance;
+            const sunY = centerY + Math.sin(sunAngle) * solarSystem.sun.distance;
+            drawSun(sunX, sunY);
+            return { x: sunX, y: sunY };
+        }
+
+        function drawPlanetAndMoons(planet, sunX, sunY) {
+            const planetAngle = planet.initialAngle + time * planet.speed;
+            const planetXRelative = Math.cos(planetAngle) * planet.distance;
+            const planetYRelative = Math.sin(planetAngle) * planet.distance;
+            const planetX = sunX + planetXRelative;
+            const planetY = sunY + planetYRelative;
+
+            if (frameCount % 2 === 0) {
+                planet.trail.push({ x: planetX, y: planetY });
+                if (planet.trail.length > 2000) planet.trail.shift();
+            }
+
+            drawTrail(planet.trail, planet.color);
+            drawPlanet(planetX, planetY, planet);
+
+            planet.moons.forEach(moon => {
+                const moonAngle = moon.initialAngle + time * moon.speed;
+                const moonX = planetX + Math.cos(moonAngle) * moon.distance;
+                const moonY = planetY + Math.sin(moonAngle) * moon.distance;
+                drawMoon(moonX, moonY, moon);
+            });
+        }
+
+        function drawEarthMoons() {
+            solarSystem.earthMoons.forEach(moon => {
+                const moonAngle = moon.initialAngle + time * moon.speed;
+                const moonX = centerX + Math.cos(moonAngle) * moon.distance;
+                const moonY = centerY + Math.sin(moonAngle) * moon.distance;
+                drawMoon(moonX, moonY, moon);
+            });
+        }
+
+        function clampOffset() {
+            <!-- const maxXDistance = (canvas.width); -->
+            <!-- const maxYDistance = (canvas.height); -->
+            <!-- const minX = -maxXDistance; -->
+            <!-- const maxX = maxXDistance; -->
+            <!-- const minY = -maxYDistance; -->
+            <!-- const maxY = maxYDistance; -->
+
+            <!-- offsetX = Math.max(minX, Math.min(maxX, offsetX)); -->
+            <!-- offsetY = Math.max(minY, Math.min(maxY, offsetY)); -->
+        }
+
+        function animate() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            drawStars();
+
+            if (followedBody) {
+                const sunAngle = solarSystem.sun.initialAngle + time * solarSystem.sun.speed;
+                const sunX = centerX + Math.cos(sunAngle) * solarSystem.sun.distance;
+                const sunY = centerY + Math.sin(sunAngle) * solarSystem.sun.distance;
+                const planetAngle = followedBody.initialAngle + time * followedBody.speed;
+                const planetX = sunX + Math.cos(planetAngle) * followedBody.distance;
+                const planetY = sunY + Math.sin(planetAngle) * followedBody.distance;
+                offsetX = canvas.width / 2 - planetX * scaleFactor;
+                offsetY = canvas.height / 2 - planetY * scaleFactor;
+            }
+
+            clampOffset();
+
+            ctx.save();
+            ctx.setTransform(scaleFactor, 0, 0, scaleFactor, offsetX + centerX * (1 - scaleFactor), offsetY + centerY * (1 - scaleFactor));
+
+            drawEarthAtCenter();
+            drawEarthMoons();
+            const sunPos = drawSunOrbit();
+            solarSystem.planets.forEach(planet => drawPlanetAndMoons(planet, sunPos.x, sunPos.y));
+
+            ctx.restore();
+
+            time += baseSpeed / (1 * scaleFactor);
+            updateDate();
+            updateZoomDisplay();
+            frameCount++;
+            requestAnimationFrame(animate);
+        }
+
+        function isMouseOverPlanet(x, y) {
+            const worldX = (x - offsetX) / scaleFactor + centerX - centerX;
+            const worldY = (y - offsetY) / scaleFactor + centerY - centerY;
+            const sunAngle = solarSystem.sun.initialAngle + time * solarSystem.sun.speed;
+            const sunX = centerX + Math.cos(sunAngle) * solarSystem.sun.distance;
+            const sunY = centerY + Math.sin(sunAngle) * solarSystem.sun.distance;
+
+            for (const planet of solarSystem.planets) {
+                const planetAngle = planet.initialAngle + time * planet.speed;
+                const planetX = sunX + Math.cos(planetAngle) * planet.distance;
+                const planetY = sunY + Math.sin(planetAngle) * planet.distance;
+                const dx = worldX - planetX;
+                const dy = worldY - planetY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance <= planet.radius / scaleFactor + 5) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        function resetToDefaultValues(){
+            scaleFactor = .5;
+            updateZoomDisplay();
+            baseSpeed = 0.75;
+            offsetX = 0;
+            offsetY = 0;
+            followedBody = null;
+            solarSystem.planets.forEach(planet => planet.trail = []);
+        }
+
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+            if (isDragging && !followedBody) {
+                const dx = e.clientX - lastX;
+                const dy = e.clientY - lastY;
+                offsetX += dx;
+                offsetY += dy;
+                lastX = e.clientX;
+                lastY = e.clientY;
+            }
+            canvas.style.cursor = isMouseOverPlanet(mouseX, mouseY) ? 'pointer' : 'default';
+        });
+
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const zoomSpeed = 0.1;
+            const speedStep = 0.1;
+
+            if (e.ctrlKey || e.metaKey) {
+                baseSpeed += e.deltaY < 0 ? speedStep : -speedStep;
+                baseSpeed = Math.max(0.1, Math.min(10, baseSpeed));
+            } else {
+                const oldScaleFactor = scaleFactor;
+                const newScaleFactor = scaleFactor + (e.deltaY < 0 ? zoomSpeed : -zoomSpeed);
+                scaleFactor = Math.max(0.1, Math.min(10, newScaleFactor));
+
+                const centerWorldX = -offsetX / oldScaleFactor;
+                const centerWorldY = -offsetY / oldScaleFactor;
+                offsetX = -centerWorldX * scaleFactor;
+                offsetY = -centerWorldY * scaleFactor;
+            }
+        }, { passive: false });
+
+        canvas.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            lastX = e.clientX;
+            lastY = e.clientY;
+        });
+
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+
+            const worldX = (clickX - offsetX) / scaleFactor + centerX - centerX;
+            const worldY = (clickY - offsetY) / scaleFactor + centerY - centerY;
+
+            let clickedPlanet = null;
+            const sunAngle = solarSystem.sun.initialAngle + time * solarSystem.sun.speed;
+            const sunX = centerX + Math.cos(sunAngle) * solarSystem.sun.distance;
+            const sunY = centerY + Math.sin(sunAngle) * solarSystem.sun.distance;
+
+            for (const planet of solarSystem.planets) {
+                const planetAngle = planet.initialAngle + time * planet.speed;
+                const planetX = sunX + Math.cos(planetAngle) * planet.distance;
+                const planetY = sunY + Math.sin(planetAngle) * planet.distance;
+                const dx = worldX - planetX;
+                const dy = worldY - planetY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance <= planet.radius / scaleFactor + 5) {
+                    clickedPlanet = planet;
+                    break;
+                }
+            }
+
+            if (clickedPlanet) {
+                followedBody = clickedPlanet;
+            } else {
+                followedBody = null;
+            }
+        });
+
+        canvas.addEventListener('dblclick', () => {
+          resetToDefaultValues();
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            isDragging = false;
+        });
+
+        window.addEventListener('mouseup', () => {
+            isDragging = false;
+        });
+
+        resizeCanvas();
+        generateStars();
+        resetToDefaultValues();
+        animate();
+
+        window.addEventListener('resize', () => {
+            resizeCanvas();
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<!--
+  Meandering Colors
+  
+  Created by: Grok and @justme_3k
+  
+  Date: March 06, 2025
+  
+  This code is being worked on by me and Grok.  Grok should read it in and the just say now what?
+  
+  Description:  This code generates a screen-filling, branching line pattern that starts from a random point in the middle 80% of the canvas, uses one of three random backtracking strategies, and fades colors based on depth. The pattern automatically restarts every 5 seconds or with the Enter key, creating a new unique design each time. Press S to cycle strategies manually during drawing, Tab to toggle debug info visibility.
+  
+  Code Format:    
+    - Use 2-space tabs for indentation
+    - Place a CR immediately after opening {
+    - For code blocks with more than 2 lines inside curly braces, place a CR immediately before the opening {
+    - 1 space after an opening ( and before a closing )
+    - When printing out code blocks sections,
+      - always use indentation as if in full code.
+      - always give the line navigational of where the section starts
+    - Always add this header back on      
+-->
+<html>
+<head>
+  <title>Meandering Colors</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: black;
+    }
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <script>
+  
+    const canvas = document.getElementById( 'canvas' );
+    const ctx = canvas.getContext( '2d' );
+
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener( 'resize', resizeCanvas );
+    resizeCanvas();
+    
+    const DISTANCE_RANGE_MIN = 2;
+    const DISTANCE_RANGE_MAX = 35;
+
+    let minDistance = 10;
+    let maxDistance = 10;
+    let bufferDistance = 10;
+    let basePointsPerFrame = 5;
+    let pointsPerFrame = 5;
+    const maxAttemptsPerPoint = 12;
+
+    let points = [ {
+      x: canvas.width * 0.1 + Math.random() * ( canvas.width * 0.8 ),
+      y: canvas.height * 0.1 + Math.random() * ( canvas.height * 0.8 ),
+      attempts: 0,
+      branches: [],
+      depth: 0,
+      weight: 0
+    } ];
+    let viablePoints = [ { index: 0, weight: 0 } ];
+    let currentIndex = 0;
+    let isDrawing = true;
+    let isPaused = false; 
+    let state = "Exploring";
+    let maxDepth = 0;
+    let doneStartTime = null; 
+    let startTime = Date.now(); 
+    let runningTime = 0; 
+    let lastUpdateTime = Date.now(); 
+    let initialPauseStart = Date.now(); 
+    let isFirstLoad = true; 
+    let backtrackStrategy = 2;
+    let alternateDirection = true;
+    let rectilinearMode = false;
+    let showDebugInfo = false;
+    let paramLock = false;
+    let frameCount = 0;
+    let lastFPSTime = Date.now();
+    let fps = 0;
+    let totalBranches = 0;
+
+    // Lock variables for parameters
+    let lockStrategy = false;
+    let lockRectilinear = false;
+    let lockColors = false;
+    let lockSpeed = false;
+    let lockDistance = false;
+
+    const speedSettings = [
+      { name: "One", multiplier: 1 / 3 },  
+      { name: "Slow", multiplier: 1 / 3 },  
+      { name: "Medium", multiplier: 1 },     
+      { name: "Fast", multiplier: 3 },       
+      { name: "Ultra", multiplier: 10 }      
+    ];
+    let currentSpeedIndex = 2;
+
+    const huePointsList = [
+      { name: "Red to Magenta", hues: [ 0, 300 ] },
+      { name: "Magenta to Red", hues: [ 300, 0 ] },
+      { name: "Yellow to Cyan", hues: [ 60, 180 ] },
+      { name: "Blue to Red", hues: [ 240, 360 ] },
+      { name: "Red-Green-Blue", hues: [ 0, 120, 240 ] },
+      { name: "Blue-Green-Blue", hues: [ 240, 120, 240 ] },
+      { name: "Orange-Teal-Purple", hues: [ 30, 150, 300 ] },      
+      { name: "Green-Yellow-Red", hues: [ 120, 60, 0 ] },
+      { name: "Cyan to Red", hues: [ 180, 360 ] },
+      { name: "Pur-Cyan-YeloGrn", hues: [ 270, 180, 90 ] },
+      { name: "Gr-P-Gr-P-Gr", hues: [ 120, 300, 120, 300, 120 ] }      
+    ];
+    let currentHueIndex = 0;
+    let huePoints = huePointsList[ currentHueIndex ].hues;
+    
+    let hueOffset = 0;
+    const twirlSpeeds = [
+      { name: "Off", speed: 0 },
+      { name: "Slow", speed: 0.1 },
+      { name: "Medium", speed: 0.5 },
+      { name: "Fast", speed: 1.5 }
+    ];
+    let currentTwirlIndex = 1;
+
+    function distance( x1, y1, x2, y2 ) {
+      return Math.sqrt( ( x2 - x1 ) ** 2 + ( y2 - y1 ) ** 2 );
+    }
+
+    function pointToLineDistance( px, py, x1, y1, x2, y2 ) {
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const mag = Math.sqrt( dx * dx + dy * dy );
+      if ( mag === 0 ) return distance( px, py, x1, y1 );
+
+      const t = Math.max( 0, Math.min( 1, ( ( px - x1 ) * dx + ( py - y1 ) * dy ) / ( mag * mag ) ) );
+      const projX = x1 + t * dx;
+      const projY = y1 + t * dy;
+      return distance( px, py, projX, projY );
+    }
+
+    function linesIntersect( x1, y1, x2, y2, x3, y3, x4, y4 ) {
+      const denominator = ( ( y4 - y3 ) * ( x2 - x1 ) ) - ( ( x4 - x3 ) * ( y2 - y1 ) );
+      if ( denominator === 0 ) return false;
+
+      const ua = ( ( ( x4 - x3 ) * ( y1 - y3 ) ) - ( ( y4 - y3 ) * ( x1 - x3 ) ) ) / denominator;
+      const ub = ( ( ( x2 - x1 ) * ( y1 - y3 ) ) - ( ( y2 - y1 ) * ( x1 - x3 ) ) ) / denominator;
+
+      return ( ua > 0 && ua < 1 && ub > 0 && ub < 1 );
+    }
+
+    function isValidSegment( currentX, currentY, newX, newY ) {
+      if ( newX < bufferDistance || newX > canvas.width - bufferDistance || 
+          newY < bufferDistance || newY > canvas.height - bufferDistance ) {
+        return false;
+      }
+
+      for ( let i = 0; i < points.length - 1; i++ ) {
+        for ( let j = 0; j < points[ i ].branches.length; j++ ) {
+          const next = points[ i ].branches[ j ];
+          if ( linesIntersect(
+            points[ i ].x, points[ i ].y,
+            next.x, next.y,
+            currentX, currentY,
+            newX, newY
+          ) ) {
+            return false;
+          }
+        }
+      }
+      if ( points.length > 0 ) {
+        const lastPoint = points[ points.length - 1 ];
+        for ( let j = 0; j < lastPoint.branches.length; j++ ) {
+          const next = lastPoint.branches[ j ];
+          if ( linesIntersect(
+            lastPoint.x, lastPoint.y,
+            next.x, next.y,
+            currentX, currentY,
+            newX, newY
+          ) ) {
+            return false;
+          }
+        }
+      }
+
+      for ( let i = 0; i < points.length - 1; i++ ) {
+        for ( let j = 0; j < points[ i ].branches.length; j++ ) {
+          const next = points[ i ].branches[ j ];
+          const dist = pointToLineDistance( newX, newY, points[ i ].x, points[ i ].y, next.x, next.y );
+          if ( dist < bufferDistance ) {
+            return false;
+          }
+        }
+      }
+      if ( points.length > 0 ) {
+        const lastPoint = points[ points.length - 1 ];
+        for ( let j = 0; j < lastPoint.branches.length; j++ ) {
+          const next = lastPoint.branches[ j ];
+          const dist = pointToLineDistance( newX, newY, lastPoint.x, lastPoint.y, next.x, next.y );
+          if ( dist < bufferDistance ) {
+            return false;
+          }
+        }
+      }
+      return true;
+    }
+
+    function updatePoints() {
+      if ( !isDrawing || isPaused ) return;
+
+      let currentX = points[ currentIndex ].x;
+      let currentY = points[ currentIndex ].y;
+      let stepAttempts = 0;
+
+      // Predefine angle options based on mode
+      let angleOptions = [];
+      if ( rectilinearMode ) {
+        angleOptions = [ 0, Math.PI / 2, Math.PI, 3 * Math.PI / 2 ];
+      } else {
+        const minAngleDiff = ( 120 / maxAttemptsPerPoint ) * ( Math.PI / 180 ); // Convert 120/maxAttempts degrees to radians
+        for ( let i = 0; i < maxAttemptsPerPoint; i++ ) {
+          let newAngle;
+          let isValid = false;
+          let attempts = 0;
+          const maxTries = 10; // Limit attempts to avoid infinite loop
+          do {
+            newAngle = Math.random() * 2 * Math.PI;
+            isValid = angleOptions.every( existingAngle => {
+              const diff = Math.abs( newAngle - existingAngle );
+              const wrappedDiff = Math.min( diff, 2 * Math.PI - diff );
+              return wrappedDiff >= minAngleDiff;
+            } );
+            attempts++;
+          } while ( !isValid && attempts < maxTries );
+          angleOptions.push( newAngle );
+        }
+      }
+      // Shuffle the angle options
+      for ( let i = angleOptions.length - 1; i > 0; i-- ) {
+        const j = Math.floor( Math.random() * ( i + 1 ) );
+        [ angleOptions[ i ], angleOptions[ j ] ] = [ angleOptions[ j ], angleOptions[ i ] ];
+      }
+
+      while ( stepAttempts < maxAttemptsPerPoint && stepAttempts < angleOptions.length ) {
+        const angle = angleOptions[ stepAttempts ];
+        const dist = minDistance + Math.random() * ( maxDistance - minDistance );
+        const newX = currentX + Math.cos( angle ) * dist;
+        const newY = currentY + Math.sin( angle ) * dist;
+
+        if ( isValidSegment( currentX, currentY, newX, newY ) ) {
+          const newDepth = points[ currentIndex ].depth + 1;
+          points[ currentIndex ].branches.push( { x: newX, y: newY, attempts: 0, branches: [], depth: newDepth, weight: 0 } );
+          totalBranches++;
+          points[ currentIndex ].weight = points[ currentIndex ].branches.length;
+          const viableEntry = viablePoints.find( vp => vp.index === currentIndex );
+          if ( viableEntry ) viableEntry.weight = points[ currentIndex ].weight;
+          currentIndex = points.length;
+          points.push( { x: newX, y: newY, attempts: 0, branches: [], depth: newDepth, weight: 0 } );
+          viablePoints.push( { index: currentIndex, weight: 0 } );
+          maxDepth = Math.max( maxDepth, newDepth );
+          state = "Exploring";
+          return;
+        }
+        stepAttempts++;
+        points[ currentIndex ].attempts++;
+      }
+
+      if ( points[ currentIndex ].attempts >= maxAttemptsPerPoint ) {
+        viablePoints = viablePoints.filter( vp => vp.index !== currentIndex );
+
+        if ( viablePoints.length > 0 ) {
+          if ( backtrackStrategy === 0 ) {
+            currentIndex = viablePoints[ viablePoints.length - 1 ].index;
+            points[ currentIndex ].attempts = 0;
+          } else if ( backtrackStrategy === 1 ) {
+            currentIndex = viablePoints[ 0 ].index;
+            points[ currentIndex ].attempts = 0;
+          } else if ( backtrackStrategy === 2 ) {
+            currentIndex = viablePoints[ alternateDirection ? viablePoints.length - 1 : 0 ].index;
+            points[ currentIndex ].attempts = 0;
+            alternateDirection = !alternateDirection;
+          } else if ( backtrackStrategy === 3 ) {
+            const randomIdx = Math.floor( Math.random() * viablePoints.length );
+            currentIndex = viablePoints[ randomIdx ].index;
+            points[ currentIndex ].attempts = 0;
+          } else if ( backtrackStrategy === 4 ) {
+            const bestPoint = viablePoints.reduce( ( best, curr ) => curr.weight > best.weight ? curr : best );
+            currentIndex = bestPoint.index;
+            points[ currentIndex ].attempts = 0;
+          }
+        } else {
+          state = "Done";
+          isDrawing = false;
+        }
+      }
+    }
+
+    function formatTime( milliseconds ) {
+      const totalSeconds = Math.floor( milliseconds / 1000 );
+      const hours = Math.floor( totalSeconds / 3600 );
+      const minutes = Math.floor( ( totalSeconds % 3600 ) / 60 );
+      const seconds = totalSeconds % 60;
+      const paddedSeconds = String( seconds ).padStart( 2, '0' );
+      if ( hours > 0 ) {
+        const paddedMinutes = String( minutes ).padStart( 2, '0' );
+        return `${ hours }:${ paddedMinutes }:${ paddedSeconds }`;
+      } else if ( minutes > 0 ) {
+        return `${ minutes }:${ paddedSeconds }`;
+      } else {
+        return `:${ paddedSeconds }`;
+      }
+    }
+
+    function updateDebugInfo() {
+      if ( !showDebugInfo ) return;
+
+      const strategyNames = [ "Newest First", "Oldest First", "Alternating", "Random", "Best" ];
+      
+      ctx.font = '14px Arial';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      
+      ctx.fillStyle = 'rgba( 0, 0, 0, .9 )';
+      ctx.shadowColor = 'rgba( 0, 0, 0, 1 )';
+      ctx.shadowBlur = 3;
+      ctx.shadowOffsetX = 1;
+      ctx.shadowOffsetY = 1;
+      const debugLines = [
+        `${ state }${ isPaused ? " (Paused)" : "" }`,
+        `Time: ${ formatTime( runningTime ) }`,
+        `Points: ${ points.length } (${ viablePoints.length })`,
+        `Current Index: ${ currentIndex }`,
+        `Max Depth: ${ maxDepth }`,
+        `Branches: ${ totalBranches }`,
+        `Strategy${ lockStrategy ? '*' : '' }: ${ strategyNames[ backtrackStrategy ] }`,
+        `Rectilinear${ lockRectilinear ? '*' : '' }: ${ rectilinearMode ? 'On' : 'Off' }`,
+        `Colors${ lockColors ? '*' : '' }: ${ huePointsList[ currentHueIndex ].name }`,
+        `Distance${ lockDistance ? '*' : '' }: ${ minDistance }>${ maxDistance }  ( ${ pointsPerFrame } )`,
+        `Speed${ lockSpeed ? '*' : '' }: ${ speedSettings[ currentSpeedIndex ].name }`,
+        `Twirl: ${ twirlSpeeds[ currentTwirlIndex ].name }`,
+        `FPS: ${ fps.toFixed( 1 ) }`,
+        `Param Lock: ${ paramLock ? 'On' : 'Off' }`
+      ];
+      ctx.fillStyle = 'white';
+      debugLines.forEach( ( line, index ) => {
+        ctx.fillText( line, 10, 10 + index * 16 );
+      } );
+
+      ctx.textAlign = 'right';
+      const keyLines = [
+        "Controls",
+        "Tab: Toggle Debug",
+        "Enter: Restart",
+        "Shift+Enter: Soft Restart",
+        "Space: Pause/Resume",
+        "S: Cycle Strategy",
+        "R: Toggle Rectilinear",
+        "C: Cycle Colors",
+        "Z: Cycle Speed",
+        "T: Cycle Twirl",
+        "D: Lock Distance",
+        "L: Toggle Param Lock",
+        "* Shift locks single param"
+      ];
+      ctx.fillStyle = 'white';
+      keyLines.forEach( ( line, index ) => {
+        ctx.fillText( line, canvas.width - 10, 10 + index * 16 );
+      } );
+
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 0;
+    }
+
+    function updateSpeed() {
+      if ( speedSettings[ currentSpeedIndex ].name === "One" ) {
+        pointsPerFrame = 1;
+      } else {
+        pointsPerFrame = Math.round( basePointsPerFrame * speedSettings[ currentSpeedIndex ].multiplier );
+      }
+    }
+
+    function restart() {
+      if ( paramLock ) {
+        softRestart();
+        return;
+      }
+
+      points = [ {
+        x: canvas.width * 0.05 + Math.random() * ( canvas.width * 0.9 ),
+        y: canvas.height * 0.05 + Math.random() * ( canvas.height * 0.9 ),
+        attempts: 0,
+        branches: [],
+        depth: 0,
+        weight: 0
+      } ];
+      viablePoints = [ { index: 0, weight: 0 } ];
+      currentIndex = 0;
+      isDrawing = true;
+      state = "Exploring";
+      maxDepth = 0;
+      if ( !lockStrategy ) backtrackStrategy = Math.floor( Math.random() * 5 );
+      alternateDirection = true;
+      if ( !lockRectilinear ) rectilinearMode = Math.random() < 0.5;
+      if ( !lockColors ) {
+        currentHueIndex = Math.floor( Math.random() * huePointsList.length );
+        huePoints = huePointsList[ currentHueIndex ].hues;
+      }
+      startTime = Date.now();
+      runningTime = 0;
+      lastUpdateTime = Date.now();
+      isFirstLoad = false;
+      isPaused = false;
+      totalBranches = 0;
+      
+      if ( !lockDistance ) {
+        const randomDistance = Math.floor( DISTANCE_RANGE_MIN + Math.random() * ( DISTANCE_RANGE_MAX - DISTANCE_RANGE_MIN ) );
+        minDistance = randomDistance;
+        maxDistance = randomDistance;
+        if( (rectilinearMode && Math.random()<0.2) || Math.random()<0.4 ) { maxDistance *= Math.floor( 1 + Math.random() * 5 ); }
+        bufferDistance = randomDistance-1;
+        basePointsPerFrame = Math.floor( DISTANCE_RANGE_MAX + 3 - bufferDistance );
+        updateSpeed();
+      }
+    }
+
+    function softRestart() {
+      points = [ {
+        x: canvas.width * 0.1 + Math.random() * ( canvas.width * 0.8 ),
+        y: canvas.height * 0.1 + Math.random() * ( canvas.height * 0.8 ),
+        attempts: 0,
+        branches: [],
+        depth: 0,
+        weight: 0
+      } ];
+      viablePoints = [ { index: 0, weight: 0 } ];
+      currentIndex = 0;
+      isDrawing = true;
+      state = "Exploring";
+      maxDepth = 0;
+      doneStartTime = null;
+      startTime = Date.now();
+      runningTime = 0;
+      lastUpdateTime = Date.now();
+      isFirstLoad = false;
+      isPaused = false;
+      totalBranches = 0;
+    }
+
+    function mapHue( depth, maxDepth, hues ) {
+      if ( maxDepth === 0 ) return hues[ 0 ];
+      if ( hues.length === 1 ) return hues[ 0 ];
+
+      const segmentCount = hues.length - 1;
+      const normalizedDepth = depth / maxDepth;
+      const segmentPosition = normalizedDepth * segmentCount;
+      const segmentIndex = Math.floor( segmentPosition );
+      const segmentFraction = segmentPosition - segmentIndex;
+
+      let baseHue;
+      if ( segmentIndex >= segmentCount ) {
+        baseHue = hues[ segmentCount ];
+      } else {
+        const startHue = hues[ segmentIndex ];
+        const endHue = hues[ segmentIndex + 1 ];
+        baseHue = startHue + ( endHue - startHue ) * segmentFraction;
+      }
+
+      const hueRange = hues[ hues.length - 1 ] - hues[ 0 ];
+      let finalHue = ( baseHue + hueOffset ) % 360;
+      if ( finalHue < 0 ) finalHue += 360;
+      return finalHue;
+    }
+
+    function draw() {
+      ctx.fillStyle = 'black';
+      ctx.fillRect( 0, 0, canvas.width, canvas.height );
+      
+      const initialElapsed = Date.now() - initialPauseStart;
+
+      frameCount++;
+      const currentTime = Date.now();
+      if ( currentTime - lastFPSTime >= 1000 ) {
+        fps = frameCount / ( ( currentTime - lastFPSTime ) / 1000 );
+        frameCount = 0;
+        lastFPSTime = currentTime;
+      }
+
+      if ( isFirstLoad && initialElapsed < 6000 ) {
+        let progress = 0;
+        let blur = 0;
+        
+        progress = ( initialElapsed ) / 6200;
+        blur = progress * 20;
+        
+        const fontSize = 120 - ( 100 * progress );
+        const opacity = 1 - progress;
+        ctx.font = `${ fontSize }px Arial`;
+        ctx.fillStyle = `rgba( 255, 255, 255, ${ opacity } )`;
+        ctx.filter = `blur( ${ blur }px )`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText( 'Meandering Colors', canvas.width / 2, canvas.height / 2 );
+        ctx.filter = 'none';
+      }
+
+      if ( !isFirstLoad || initialElapsed >= 1000 ) {
+        ctx.lineWidth = bufferDistance / 2.2;
+        for ( let i = 0; i < points.length; i++ ) {
+          for ( let j = 0; j < points[ i ].branches.length; j++ ) {
+            const next = points[ i ].branches[ j ];
+            const hue = mapHue( next.depth, maxDepth, huePoints );
+            ctx.beginPath();
+            ctx.strokeStyle = `hsl( ${ hue }, 100%, 50% )`;
+            ctx.lineCap = next.branches.length === 0 ? 'round' : 'butt';
+            ctx.moveTo( points[ i ].x, points[ i ].y );
+            ctx.lineTo( next.x, next.y );
+            ctx.stroke();
+          }
+        }
+      }
+
+      updateDebugInfo();
+
+      requestAnimationFrame( draw );
+    }
+
+    function updateLoop() {
+      const currentTime = Date.now();
+      const deltaTime = currentTime - lastUpdateTime;
+
+      hueOffset += twirlSpeeds[ currentTwirlIndex ].speed * ( deltaTime / 16.67 ); // Normalized to 60fps
+      if ( hueOffset >= 360 ) hueOffset -= 360;
+      if ( hueOffset < 0 ) hueOffset += 360;
+
+      if ( !isPaused && state !== "Done" ) {
+        runningTime += deltaTime;
+      }
+
+      if ( !isFirstLoad || ( Date.now() - initialPauseStart >= 1000 ) ) {
+        if ( isDrawing && !isPaused ) {
+          if ( viablePoints.length === 0 ) {
+            state = "Done";
+            isDrawing = false;
+          } else {
+            for ( let i = 0; i < pointsPerFrame; i++ ) {
+              updatePoints();
+            }
+          }
+        }
+
+        if ( !isPaused ) {
+          if ( state === "Done" && doneStartTime === null ) {
+            doneStartTime = Date.now();
+          }
+          if ( doneStartTime !== null ) {
+            const elapsed = Date.now() - doneStartTime;
+            if ( elapsed >= 3000 ) {
+              restart();
+              doneStartTime = null;
+            }
+          }
+        }
+      }
+
+      lastUpdateTime = currentTime;
+      requestAnimationFrame( updateLoop );
+    }
+
+    document.addEventListener( 'keydown', ( event ) => {
+      if ( event.key === 'Tab' ) {
+        event.preventDefault();
+        showDebugInfo = !showDebugInfo;
+      } else if ( event.key === 'Enter' ) {
+        event.preventDefault();
+        if ( event.shiftKey ) {
+          softRestart();
+        } else {
+          restart();
+        }
+        doneStartTime = null;
+      } else if ( event.key === 's' || event.key === 'S' ) {
+        event.preventDefault();
+        if ( event.shiftKey ) {
+          lockStrategy = !lockStrategy;
+        } else {
+          backtrackStrategy = ( backtrackStrategy + 1 ) % 5;
+          alternateDirection = true;
+        }
+      } else if ( event.key === 'r' || event.key === 'R' ) {
+        event.preventDefault();
+        if ( event.shiftKey ) {
+          lockRectilinear = !lockRectilinear;
+        } else {
+          rectilinearMode = !rectilinearMode;
+        }
+      } else if ( event.key === 'c' || event.key === 'C' ) {
+        event.preventDefault();
+        if ( event.shiftKey ) {
+          lockColors = !lockColors;
+        } else {
+          currentHueIndex = ( currentHueIndex + 1 ) % huePointsList.length;
+          huePoints = huePointsList[ currentHueIndex ].hues;
+        }
+      } else if ( event.key === 'z' || event.key === 'Z' ) {
+        event.preventDefault();
+        if ( event.shiftKey ) {
+          lockSpeed = !lockSpeed;
+        } else {
+          currentSpeedIndex = ( currentSpeedIndex + 1 ) % speedSettings.length;
+          updateSpeed();
+        }
+      } else if ( event.key === 't' || event.key === 'T' ) {
+        event.preventDefault();
+        currentTwirlIndex = ( currentTwirlIndex + 1 ) % twirlSpeeds.length;
+      } else if ( event.key === 'd' || event.key === 'D' ) {
+        if ( event.shiftKey ) {
+          event.preventDefault();
+          lockDistance = !lockDistance;
+        }
+      } else if ( event.key === ' ' ) {
+        event.preventDefault();
+        isPaused = !isPaused;
+      } else if ( event.key === 'l' || event.key === 'L' ) {
+        event.preventDefault();
+        paramLock = !paramLock;
+      }
+    } );
+    
+    restart();
+    isFirstLoad = true;
+    requestAnimationFrame( draw );
+    requestAnimationFrame( updateLoop );
+  </script>
+</body>
+</html>

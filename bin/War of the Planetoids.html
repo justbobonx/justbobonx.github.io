@@ -1,0 +1,1863 @@
+<!DOCTYPE html>
+<html lang="en">
+<!--
+*** Grok Doc ***
+Attention Grok: Please read and follow these instructions when this HTML file is uploaded in a future session:
+
+Instructions:
+  1. Always add the Grok Doc back into the HTML output as a header comment.
+  2. Review the current state of the game "Planet Link."
+  3. Be prepared to suggest or implement new features based on my next requests.
+  4. Maintain the existing mechanics (two base planets, scattered resource planets, vector style) unless I specify changes.
+  5. Keep track of the current settings (e.g., planet positions, sizes) for reference.
+  6. Await my specific instructions before making any modifications.
+  7. Do not print out any of the code after modifications unless explicitly asked to.
+  8. The user is a highly experienced JavaScript developer, so responses can use in-depth coding language and ideas, assuming a strong understanding of technical concepts.
+  9. Never print the full code after a change unless explicitly instructed with 'print it'.
+  11. When asked about names and values, show the actual names and values from the code, not just conceptual information.
+  12. When done with 'print it', tell me how long it took in minutes and seconds.
+
+*** Commands ***
+  - "print it": Only print the full HTML code into a doc block when I say this (instructed on February 22, 2025).
+  - "to grok doc": add the newly given command or instructions to the Grok Doc.
+  
+-->
+<head>
+  <meta charset="UTF-8">
+  <title>War of the Planetoids</title>
+  <style>
+    body {
+      margin: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #000000;
+    }
+    #gameCanvas {
+      border: 2px solid #333;
+      cursor: default;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="1280" height="720"></canvas>
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const masterGain = audioCtx.createGain();
+    masterGain.connect(audioCtx.destination);
+
+    const GAME_WIDTH = 1280;
+    const GAME_HEIGHT = 720;
+    const MIN_PLANET_DISTANCE = 50;
+    const INITIAL_SHIP_QUANTITY = 6;
+    const NOMINAL_SHIP_SPEED = 1.5;
+    const SHIP_CREATE_HOLD_TIME = 360;
+    const PLANET_LAUNCH_SIZE_INCREASE = 10;
+    const PLANET_LAUNCH_ANIMATION_DURATION = 600;
+    const NOMINAL_RESOURCE_LAUNCH = 240;
+    const DESIRED_RESOURCE_PLANETS = 8;
+    let isMuted = false;
+
+    const shipCosts = {
+      enemyBase: { Fuel: 1, Produce: 1, Metal: 2 },
+      healBase: { Fuel: 1, Produce: 2, Metal: 1 },
+      resourcePlanet: { Fuel: 1, Produce: 1, Metal: 1 }
+    };
+
+    function shadeColor(baseColor, shadeColor) {
+      const base = parseInt(baseColor.slice(1), 16);
+      const shade = parseInt(shadeColor.slice(1), 16);
+      const r = Math.floor(((base >> 16) & 255) * 0.9 + ((shade >> 16) & 255) * 0.1);
+      const g = Math.floor(((base >> 8) & 255) * 0.9 + ((shade >> 8) & 255) * 0.1);
+      const b = Math.floor((base & 255) * 0.9 + (shade & 255) * 0.1);
+      return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+    }
+
+    function playBeep(frequency, duration, type = 'square', volume = 0.1) {
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = type;
+      oscillator.frequency.value = frequency;
+      gainNode.gain.value = volume;
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(masterGain);
+      
+      oscillator.start(audioCtx.currentTime);
+      oscillator.stop(audioCtx.currentTime + duration / 1000);
+    }
+
+    function playBaseHitBoom() {
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = 'sine';
+      oscillator.frequency.value = 100;
+      gainNode.gain.setValueAtTime(0.15, audioCtx.currentTime);
+      gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.5);
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(masterGain);
+      
+      oscillator.start(audioCtx.currentTime);
+      oscillator.stop(audioCtx.currentTime + 0.5);
+    }
+
+    function playBaseAttackTrill() {
+      playBeep(100, 100, 'sine', 0.15);
+      setTimeout(() => playBeep(200, 100, 'sine', 0.15), 100);
+      setTimeout(() => playBeep(300, 100, 'sine', 0.15), 200);
+      setTimeout(() => playBeep(400, 100, 'sine', 0.15), 300);
+    }
+
+    function playChiptuneNoise(duration, volume = 0.1, pitchSweep = null) {
+      const sampleRate = audioCtx.sampleRate;
+      const length = Math.floor(sampleRate * (duration / 1000));
+      const buffer = audioCtx.createBuffer(1, length, sampleRate);
+      const data = buffer.getChannelData(0);
+
+      for (let i = 0; i < length; i++) {
+        data[i] = (Math.random() * 2) - 1;
+      }
+
+      const source = audioCtx.createBufferSource();
+      const gainNode = audioCtx.createGain();
+      source.buffer = buffer;
+      gainNode.gain.value = volume;
+
+      source.connect(gainNode);
+      gainNode.connect(masterGain);
+
+      if (pitchSweep) {
+        source.playbackRate.value = pitchSweep.start;
+        source.playbackRate.linearRampToValueAtTime(pitchSweep.end, audioCtx.currentTime + duration / 1000);
+      }
+
+      source.start(audioCtx.currentTime);
+      source.stop(audioCtx.currentTime + duration / 1000);
+    }
+
+    function playVictoryFanfare() {
+      playBeep(523.25, 200, 'square', 0.2);
+      setTimeout(() => playBeep(659.25, 200, 'square', 0.2), 200);
+      setTimeout(() => playBeep(783.99, 300, 'square', 0.2), 400);
+      setTimeout(() => playBeep(1046.50, 400, 'square', 0.2), 700);
+    }
+
+    function playNoResourcesTrill() {
+      playBeep(300, 100, 'square', 0.1);
+      setTimeout(() => playBeep(150, 200, 'square', 0.1), 100);
+    }
+
+    function playSpeedBoostTrill(boostCount) {
+      const basePitch = 400 + (boostCount - 1) * 100;
+      playBeep(basePitch, 100, 'square', 0.1);
+      setTimeout(() => playBeep(basePitch + 100, 100, 'square', 0.1), 100);
+    }
+
+    let ambientOscillators = [];
+    let ambientGainNodes = [];
+    let ambientTimeout = null;
+
+    function startAmbientSounds() {
+      const frequencies = [65.41, 77.78, 98.00];
+      function playCycle() {
+        if (isPaused || gameOver) return;
+
+        ambientOscillators = [];
+        ambientGainNodes = [];
+
+        let oscillator1 = audioCtx.createOscillator();
+        let gainNode1 = audioCtx.createGain();
+        oscillator1.type = 'square';
+        oscillator1.frequency.value = frequencies[0];
+        gainNode1.gain.setValueAtTime(0.02, audioCtx.currentTime);
+        gainNode1.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.1);
+        oscillator1.connect(gainNode1);
+        gainNode1.connect(masterGain);
+        oscillator1.start(audioCtx.currentTime);
+        oscillator1.stop(audioCtx.currentTime + 0.1);
+        ambientOscillators.push(oscillator1);
+        ambientGainNodes.push(gainNode1);
+
+        let oscillator2 = audioCtx.createOscillator();
+        let gainNode2 = audioCtx.createGain();
+        oscillator2.type = 'square';
+        oscillator2.frequency.value = frequencies[1];
+        gainNode2.gain.setValueAtTime(0.02, audioCtx.currentTime + 0.15);
+        gainNode2.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.25);
+        oscillator2.connect(gainNode2);
+        gainNode2.connect(masterGain);
+        oscillator2.start(audioCtx.currentTime + 0.15);
+        oscillator2.stop(audioCtx.currentTime + 0.25);
+        ambientOscillators.push(oscillator2);
+        ambientGainNodes.push(gainNode2);
+
+        let oscillator3 = audioCtx.createOscillator();
+        let gainNode3 = audioCtx.createGain();
+        oscillator3.type = 'square';
+        oscillator3.frequency.value = frequencies[2];
+        gainNode3.gain.setValueAtTime(0.02, audioCtx.currentTime + 0.3);
+        gainNode3.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.4);
+        oscillator3.connect(gainNode3);
+        gainNode3.connect(masterGain);
+        oscillator3.start(audioCtx.currentTime + 0.3);
+        oscillator3.stop(audioCtx.currentTime + 0.4);
+        ambientOscillators.push(oscillator3);
+        ambientGainNodes.push(gainNode3);
+
+        ambientTimeout = setTimeout(playCycle, 400);
+      }
+      playCycle();
+    }
+
+    let backgroundOscillator = null;
+    let backgroundGainNode = null;
+    let backgroundTimeout = null;
+
+    function playBackgroundMusic() {
+      if (isPaused) return;
+
+      const minorKeys = [
+        [32.70, 36.71, 38.89, 43.65, 49.00, 51.91, 58.27, 65.41],
+        [34.65, 38.89, 41.20, 46.25, 51.91, 55.00, 61.74, 65.41],
+        [36.71, 41.20, 43.65, 49.00, 55.00, 58.27, 65.41, 261.63],
+        [38.89, 43.65, 46.25, 51.91, 58.27, 61.74, 65.41, 311.13],
+        [41.20, 46.25, 49.00, 55.00, 61.74, 65.41, 329.63]
+      ];
+      const key = minorKeys[Math.floor(Math.random() * minorKeys.length)];
+      const note = key[Math.floor(Math.random() * key.length)];
+      
+      backgroundOscillator = audioCtx.createOscillator();
+      backgroundGainNode = audioCtx.createGain();
+      backgroundOscillator.type = 'sine';
+      backgroundOscillator.frequency.value = note;
+      const duration = Math.random() < 0.3 ? 4 : 2;
+      backgroundGainNode.gain.setValueAtTime(0.05, audioCtx.currentTime);
+      backgroundGainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + duration);
+      
+      backgroundOscillator.connect(backgroundGainNode);
+      backgroundGainNode.connect(masterGain);
+      
+      backgroundOscillator.start(audioCtx.currentTime);
+      backgroundOscillator.stop(audioCtx.currentTime + duration);
+      
+      const baseDelay = 4000 + Math.random() * 2000;
+      const pause = Math.random() < 0.5 ? 1000 + Math.random() * 2000 : 0;
+      backgroundTimeout = setTimeout(playBackgroundMusic, baseDelay + pause);
+    }
+
+    function drawShip(x, y, rotation = 0, showFlame = false, scale = 1.2, target = null, player = null) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(rotation);
+      ctx.scale(scale, scale);
+
+      const isBaseAttack = target instanceof BasePlanet && target.player !== player;
+      const fillColor = shadeColor("#222222", "#CCCCCC");
+
+      if (isBaseAttack) {
+        ctx.beginPath();
+        ctx.moveTo(6, 0);
+        ctx.lineTo(-6, -4);
+        ctx.lineTo(-6, 4);
+        ctx.closePath();
+        ctx.fillStyle = fillColor;
+        ctx.fill();
+        ctx.strokeStyle = "#CCCCCC";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.save();
+        ctx.scale(0.8, 0.8);
+        ctx.translate(8 / 0.8, 0);
+        ctx.beginPath();
+        ctx.moveTo(6, 0);
+        ctx.lineTo(-6, -4);
+        ctx.lineTo(-6, 4);
+        ctx.closePath();
+        ctx.fillStyle = fillColor;
+        ctx.fill();
+        ctx.strokeStyle = "#CCCCCC";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.restore();
+
+        if (showFlame) {
+          ctx.beginPath();
+          ctx.moveTo(-7.2, -2.4);
+          ctx.lineTo(-12, 0);
+          ctx.lineTo(-7.2, 2.4);
+          ctx.strokeStyle = "#FF8800";
+          ctx.stroke();
+        }
+      } else {
+        ctx.beginPath();
+        ctx.moveTo(6, 0);
+        ctx.lineTo(-6, -4);
+        ctx.lineTo(-6, 4);
+        ctx.closePath();
+        ctx.fillStyle = fillColor;
+        ctx.fill();
+        ctx.strokeStyle = "#CCCCCC";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        if (showFlame) {
+          ctx.beginPath();
+          ctx.moveTo(-7.2, -2.4);
+          ctx.lineTo(-12, 0);
+          ctx.lineTo(-7.2, 2.4);
+          ctx.strokeStyle = "#FF8800";
+          ctx.stroke();
+        }
+      }
+
+      ctx.restore();
+    }
+
+    class PlanetFragment {
+      constructor(x, y, radius, angle, speed, rotationSpeed, color) {
+        this.x = x;
+        this.y = y;
+        this.radius = radius;
+        this.angle = angle;
+        this.speed = speed;
+        this.rotationSpeed = rotationSpeed || 0;
+        this.opacity = 1;
+        this.rotation = 0;
+        this.color = shadeColor(color, "#444444");
+      }
+
+      update() {
+        this.x += Math.cos(this.angle) * this.speed;
+        this.y += Math.sin(this.angle) * this.speed;
+        this.rotation += this.rotationSpeed;
+        this.opacity -= 0.02;
+      }
+
+      draw() {
+        if (this.opacity <= 0) return;
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.rotation);
+        ctx.beginPath();
+        ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+        ctx.strokeStyle = `${this.color}${Math.floor(this.opacity * 255).toString(16).padStart(2, '0')}`;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    class BasePlanet {
+      constructor(x, y, radius, color, mass, player) {
+        this.x = x;
+        this.y = y;
+        this.radius = radius;
+        this.color = color;
+        this.mass = mass;
+        this.player = player;
+        this.resources = { Fuel: 0, Produce: 0, Metal: 0 };
+        this.shapePoints = this.generateShapePoints();
+        this.rotation = Math.random() * Math.PI * 2;
+        this.health = 10;
+        this.destroyed = false;
+        this.resourceAnimations = [];
+        this.resourceTimer = 0;
+        this.boostIndicators = [];
+        this.launchAnimation = { active: false, startTime: null, scale: 1 };
+      }
+
+      generateShapePoints() {
+        const points = [];
+        const numPoints = 18 + Math.floor(Math.random() * 5);
+        for (let i = 0; i < numPoints; i++) {
+          const angle = (i / numPoints) * Math.PI * 2;
+          const variance = 0.7 + Math.random() * 0.3;
+          const r = this.radius * variance;
+          points.push({ x: Math.cos(angle) * r, y: Math.sin(angle) * r });
+        }
+        return points;
+      }
+
+      useResource(resource, amount = 1) {
+        if (this.resources[resource] >= amount) {
+          this.resources[resource] -= amount;
+          const index = Object.keys(this.resources).indexOf(resource);
+          const boxWidth = 6;
+          const boxHeight = 11;
+          const boxSpacing = 6;
+          const startX = this.player === 1 ? 15 : GAME_WIDTH - 15;
+          const startY = this.player === 1 ? this.y + this.radius + 5 : this.y - this.radius - 5 - (3 * (boxHeight + boxSpacing) - boxSpacing);
+          const x = this.player === 1 ? startX + (this.resources[resource] * (boxWidth + 2)) : startX - ((this.resources[resource] + 1) * (boxWidth + 2));
+          const y = startY + index * (boxHeight + boxSpacing);
+          this.resourceAnimations.push({ resource, x, y, timer: 20, scale: 1.5, opacity: 1 });
+        }
+      }
+
+      update() {
+        if (!this.destroyed) {
+          this.rotation += 0.005;
+          this.resourceAnimations.forEach(anim => {
+            anim.timer -= 1;
+            anim.scale = 1.5 - (anim.timer / 20) * 0.5;
+            anim.opacity = anim.timer / 20;
+          });
+          this.resourceAnimations = this.resourceAnimations.filter(anim => anim.timer > 0);
+
+          this.resourceTimer += 1;
+          if (this.resourceTimer >= 420) {
+            this.resources.Fuel += 1;
+            this.resources.Produce += 1;
+            this.resources.Metal += 1;
+            playChiptuneNoise(288, 0.15, { start: 2.0, end: 3.0 });
+            this.resourceTimer = 0;
+          }
+
+          this.boostIndicators.forEach(ind => ind.opacity -= 0.02);
+          this.boostIndicators = this.boostIndicators.filter(ind => ind.opacity > 0);
+
+          if (this.launchAnimation.active) {
+            const elapsed = Date.now() - this.launchAnimation.startTime;
+            const progress = Math.min(elapsed / PLANET_LAUNCH_ANIMATION_DURATION, 1);
+            this.launchAnimation.scale = 1 + (PLANET_LAUNCH_SIZE_INCREASE / this.radius) * (1 - progress);
+            if (progress >= 1) {
+              this.launchAnimation.active = false;
+              this.launchAnimation.scale = 1;
+            }
+          }
+        }
+      }
+
+      draw() {
+        if (this.destroyed) return;
+
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.rotation);
+        ctx.scale(this.launchAnimation.scale, this.launchAnimation.scale);
+
+        ctx.beginPath();
+        ctx.moveTo(this.shapePoints[0].x, this.shapePoints[0].y);
+        for (let i = 1; i < this.shapePoints.length; i++) {
+          ctx.lineTo(this.shapePoints[i].x, this.shapePoints[i].y);
+        }
+        ctx.closePath();
+        ctx.fillStyle = shadeColor("#222222", this.color);
+        ctx.fill();
+        ctx.strokeStyle = this.color;
+        ctx.lineWidth = 3;
+        ctx.stroke();
+
+        if (this.health > 0) {
+          const maxHealth = 10;
+          const numRings = this.health;
+          const maxSteps = maxHealth + 1;
+          for (let i = 0; i < numRings; i++) {
+            const scale = (i + 1) / maxSteps;
+            ctx.beginPath();
+            ctx.moveTo(this.shapePoints[0].x * scale, this.shapePoints[0].y * scale);
+            for (let j = 1; j < this.shapePoints.length; j++) {
+              ctx.lineTo(this.shapePoints[j].x * scale, this.shapePoints[j].y * scale);
+            }
+            ctx.closePath();
+            ctx.strokeStyle = this.player === 1 ? "#FF00FF" : "#FF8800";
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            if (i === 0) {
+              ctx.fillStyle = this.player === 1 ? "#FF00FF" : "#FF8800";
+              ctx.fill();
+            }
+          }
+        }
+        ctx.restore();
+
+        if (gameStarted) {
+          const barWidth = 12;
+          const barHeight = 40;
+          const barX = this.player === 1 ? ((this.x - this.radius) / 2 - barWidth / 2) : ((this.x + this.radius + GAME_WIDTH) / 2 - barWidth / 2);
+          const barY = this.y - barHeight / 2;
+          const fillHeight = (this.resourceTimer / 420) * barHeight;
+          const t = this.resourceTimer / 420;
+          const r = Math.floor(68 + (221 - 68) * t);
+          const g = Math.floor(68 + (221 - 68) * t);
+          const b = Math.floor(68 + (221 - 68) * t);
+          const fillColor = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+          
+          ctx.fillStyle = "#444444";
+          ctx.fillRect(barX, barY, barWidth, barHeight);
+          ctx.fillStyle = fillColor;
+          ctx.fillRect(barX, barY + barHeight - fillHeight, barWidth, fillHeight);
+
+          const boxWidth = 6;
+          const boxHeight = 11;
+          const boxSpacing = 6;
+          const resourceColors = { Fuel: "#FFD700", Produce: "#00FF00", Metal: "#00FFFF" };
+          const resourceDarkColors = { 
+            Fuel: "#806B00",
+            Produce: "#007F00",
+            Metal: "#007F7F"
+          };
+          const resourceLabels = { Fuel: "F", Produce: "P", Metal: "M" };
+          const resourceKeys = Object.keys(this.resources);
+
+          if (this.player === 1) {
+            const startX = 15;
+            const startY = this.y + this.radius + 5;
+            resourceKeys.forEach((res, i) => {
+              const labelX = startX - 5;
+              const labelY = startY + i * (boxHeight + boxSpacing) + boxHeight / 2 + 3;
+              ctx.font = "12px 'Courier New'";
+              ctx.fillStyle = "#FFFFFF";
+              ctx.textAlign = "right";
+              ctx.fillText(resourceLabels[res], labelX, labelY);
+
+              for (let j = 0; j < this.resources[res]; j++) {
+                const x = startX + j * (boxWidth + 2);
+                const y = startY + i * (boxHeight + boxSpacing);
+                ctx.fillStyle = resourceDarkColors[res];
+                ctx.beginPath();
+                ctx.roundRect(x, y, boxWidth, boxHeight, 2);
+                ctx.fill();
+                ctx.strokeStyle = resourceColors[res];
+                ctx.lineWidth = 1;
+                ctx.stroke();
+              }
+            });
+          } else {
+            const startX = GAME_WIDTH - 15;
+            const startY = this.y - this.radius - 5 - (resourceKeys.length * (boxHeight + boxSpacing) - boxSpacing);
+            resourceKeys.forEach((res, i) => {
+              const labelX = startX + 5;
+              const labelY = startY + i * (boxHeight + boxSpacing) + boxHeight / 2 + 3;
+              ctx.font = "12px 'Courier New'";
+              ctx.fillStyle = "#FFFFFF";
+              ctx.textAlign = "left";
+              ctx.fillText(resourceLabels[res], labelX, labelY);
+
+              for (let j = 0; j < this.resources[res]; j++) {
+                const x = startX - (j + 1) * (boxWidth + 2);
+                const y = startY + i * (boxHeight + boxSpacing);
+                ctx.fillStyle = resourceDarkColors[res];
+                ctx.beginPath();
+                ctx.roundRect(x, y, boxWidth, boxHeight, 2);
+                ctx.fill();
+                ctx.strokeStyle = resourceColors[res];
+                ctx.lineWidth = 1;
+                ctx.stroke();
+              }
+            });
+          }
+
+          this.resourceAnimations.forEach(anim => {
+            ctx.save();
+            ctx.translate(anim.x + boxWidth / 2, anim.y + boxHeight / 2);
+            ctx.scale(anim.scale, anim.scale);
+            ctx.fillStyle = `${resourceColors[anim.resource]}${Math.floor(anim.opacity * 255).toString(16).padStart(2, '0')}`;
+            ctx.fillRect(-boxWidth / 2, -boxHeight / 2, boxWidth, boxHeight);
+            ctx.restore();
+          });
+
+          this.boostIndicators.forEach((ind, i) => {
+            ctx.save();
+            ctx.translate(ind.x, ind.y);
+            ctx.fillStyle = "#FFFFCC";
+            ctx.strokeStyle = "#000000";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(-6, 0);
+            ctx.lineTo(6, 0);
+            ctx.moveTo(0, -6);
+            ctx.lineTo(0, 6);
+            ctx.fill();
+            ctx.stroke();
+            ctx.globalAlpha = ind.opacity;
+            ctx.restore();
+          });
+        }
+      }
+
+      triggerLaunchAnimation() {
+        this.launchAnimation.active = true;
+        this.launchAnimation.startTime = Date.now();
+      }
+    }
+
+    class ResourcePlanet {
+      constructor(x, y, radius, color, mass, resource, quantity) {
+        this.x = x;
+        this.y = y;
+        this.radius = radius;
+        this.color = color;
+        this.mass = mass;
+        this.resource = resource;
+        this.quantity = quantity;
+        this.player1Ships = 0;
+        this.player2Ships = 0;
+        this.shapePoints = this.generateShapePoints();
+        this.rotation = Math.random() * Math.PI * 2;
+        this.launchTimer = NOMINAL_RESOURCE_LAUNCH;
+        this.boostIndicators = [];
+        this.launchAnimation = { active: false, startTime: null, scale: 1 };
+      }
+
+      generateShapePoints() {
+        const points = [];
+        const numPoints = 8 + Math.floor(Math.random() * 4);
+        for (let i = 0; i < numPoints; i++) {
+          const angle = (i / numPoints) * Math.PI * 2;
+          const variance = 0.7 + Math.random() * 0.3;
+          const r = this.radius * variance;
+          points.push({ x: Math.cos(angle) * r, y: Math.sin(angle) * r });
+        }
+        return points;
+      }
+
+      update() {
+        this.rotation += 0.005;
+        if (this.quantity <= 0 && this.resource !== "None") {
+          this.resource = "None";
+          this.color = resources[0].color;
+          for (let i = 0; i < 5; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = 1 + Math.random() * 2;
+            const rotationSpeed = (Math.random() - 0.5) * 0.1;
+            destroyedPlanetFragments.push(new PlanetFragment(this.x, this.y, 5 + Math.random() * 5, angle, speed, rotationSpeed, this.color));
+          }
+          const index = resourcePlanets.indexOf(this);
+          if (index > -1) resourcePlanets.splice(index, 1);
+
+          const delay = 5000 + Math.random() * 3000;
+          planetReplacementQueue.push({ x: this.x, y: this.y, timer: delay });
+        }
+        if (this.quantity > 0 && (this.player1Ships > this.player2Ships || this.player2Ships > this.player1Ships)) {
+          this.launchTimer -= 1;
+          if (this.launchTimer <= 0) {
+            const dominantPlayer = this.player1Ships > this.player2Ships ? 1 : 2;
+            const targetBase = basePlanets.find(b => b.player === dominantPlayer && !b.destroyed);
+            if (targetBase) {
+              this.quantity -= 1;
+              this.triggerLaunchAnimation();
+              const angle = Math.atan2(targetBase.y - this.y, targetBase.x - this.x);
+              const startX = this.x + Math.cos(angle) * this.radius;
+              const startY = this.y + Math.sin(angle) * this.radius;
+              const dominantCount = Math.max(this.player1Ships, this.player2Ships);
+              const otherCount = Math.min(this.player1Ships, this.player2Ships);
+              const shipDifference = dominantCount - otherCount;
+              const speed = NOMINAL_SHIP_SPEED * (1 + shipDifference * 0.1);
+              resourceShips.push(new ResourceShip(startX, startY, targetBase.x, targetBase.y, this.color, this.resource, dominantPlayer, speed));
+              playChiptuneNoise(288, 0.05, { start: 1.0, end: 1.2 });
+
+              const launchReductionFactor = 1 - (shipDifference * 0.1);
+              this.launchTimer = Math.max(30, NOMINAL_RESOURCE_LAUNCH * launchReductionFactor);
+            } else {
+              this.launchTimer = NOMINAL_RESOURCE_LAUNCH;
+            }
+          }
+        }
+        this.boostIndicators.forEach(ind => ind.opacity -= 0.02);
+        this.boostIndicators = this.boostIndicators.filter(ind => ind.opacity > 0);
+        if (this.launchAnimation.active) {
+          const elapsed = Date.now() - this.launchAnimation.startTime;
+          const progress = Math.min(elapsed / PLANET_LAUNCH_ANIMATION_DURATION, 1);
+          this.launchAnimation.scale = 1 + (PLANET_LAUNCH_SIZE_INCREASE / this.radius) * (1 - progress);
+          if (progress >= 1) {
+            this.launchAnimation.active = false;
+            this.launchAnimation.scale = 1;
+          }
+        }
+      }
+
+      draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.rotation);
+        ctx.scale(this.launchAnimation.scale, this.launchAnimation.scale);
+
+        ctx.beginPath();
+        ctx.moveTo(this.shapePoints[0].x, this.shapePoints[0].y);
+        for (let i = 1; i < this.shapePoints.length; i++) {
+          ctx.lineTo(this.shapePoints[i].x, this.shapePoints[i].y);
+        }
+        ctx.closePath();
+        ctx.fillStyle = shadeColor("#222222", this.color);
+        ctx.fill();
+        ctx.strokeStyle = this.color;
+        ctx.lineWidth = 3;
+        ctx.stroke();
+
+        const dominantPlayer = this.player1Ships > this.player2Ships ? 1 : this.player2Ships > this.player1Ships ? 2 : 0;
+        if (dominantPlayer > 0) {
+          ctx.beginPath();
+          ctx.moveTo(this.shapePoints[0].x * 0.65, this.shapePoints[0].y * 0.65);
+          for (let i = 1; i < this.shapePoints.length; i++) {
+            ctx.lineTo(this.shapePoints[i].x * 0.65, this.shapePoints[i].y * 0.65);
+          }
+          ctx.closePath();
+          ctx.strokeStyle = dominantPlayer === 1 ? "#FF00FF" : "#FF8800";
+          ctx.lineWidth = 3;
+          ctx.stroke();
+        }
+
+        ctx.restore();
+
+        if (dominantPlayer > 0) {
+          const targetBase = basePlanets.find(b => b.player === dominantPlayer && !b.destroyed);
+          if (targetBase) {
+            const angle = Math.atan2(targetBase.y - this.y, targetBase.x - this.x);
+            const arrowX = this.x + Math.cos(angle) * (this.radius + 35);
+            const arrowY = this.y + Math.sin(angle) * (this.radius + 35);
+            
+            ctx.save();
+            ctx.translate(arrowX, arrowY);
+            ctx.rotate(angle);
+            
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(-30, -2.5);
+            ctx.lineTo(-30, 2.5);
+            ctx.closePath();
+            ctx.fillStyle = dominantPlayer === 1 ? "rgba(255, 0, 255, 0.5)" : "rgba(255, 136, 0, 0.5)";
+            ctx.fill();
+            
+            ctx.restore();
+          }
+        }
+
+        if (gameStarted) {
+          const barWidth = 20;
+          const barHeight = 4;
+          const barX = this.x - barWidth / 2;
+          const barY = this.y + this.radius + 5;
+          const fillWidth = (this.quantity / 12) * barWidth;
+          ctx.fillStyle = this.color;
+          ctx.fillRect(barX, barY, fillWidth, barHeight);
+
+          const triWidth = 7;
+          const triHeight = 8;
+          const sameTypeSpacing = 1;
+          const diffTypeSpacing = 2;
+          const totalWidthP1 = this.player1Ships * (triWidth + sameTypeSpacing) - (this.player1Ships > 0 ? sameTypeSpacing : 0);
+          const totalWidthP2 = this.player2Ships * (triWidth + sameTypeSpacing) - (this.player2Ships > 0 ? sameTypeSpacing : 0);
+          const totalWidth = totalWidthP1 + totalWidthP2 + (this.player1Ships > 0 && this.player2Ships > 0 ? diffTypeSpacing : 0);
+          const startX = this.x - totalWidth / 2;
+
+          for (let i = 0; i < this.player1Ships; i++) {
+            const triX = startX + i * (triWidth + sameTypeSpacing);
+            const triY = this.y - this.radius - 5;
+            ctx.beginPath();
+            ctx.moveTo(triX + triWidth, triY - triHeight / 2);
+            ctx.lineTo(triX, triY);
+            ctx.lineTo(triX + triWidth, triY + triHeight / 2);
+            ctx.closePath();
+            ctx.fillStyle = "#FF00FF";
+            ctx.fill();
+          }
+          for (let i = 0; i < this.player2Ships; i++) {
+            const triX = startX + totalWidthP1 + (this.player1Ships > 0 ? diffTypeSpacing : 0) + i * (triWidth + sameTypeSpacing);
+            const triY = this.y - this.radius - 5;
+            ctx.beginPath();
+            ctx.moveTo(triX, triY - triHeight / 2);
+            ctx.lineTo(triX + triWidth, triY);
+            ctx.lineTo(triX, triY + triHeight / 2);
+            ctx.closePath();
+            ctx.fillStyle = "#FF8800";
+            ctx.fill();
+          }
+
+          this.boostIndicators.forEach((ind, i) => {
+            ctx.save();
+            ctx.translate(ind.x, ind.y);
+            ctx.fillStyle = "#FFFFCC";
+            ctx.strokeStyle = "#000000";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(-6, 0);
+            ctx.lineTo(6, 0);
+            ctx.moveTo(0, -6);
+            ctx.lineTo(0, 6);
+            ctx.fill();
+            ctx.stroke();
+            ctx.globalAlpha = ind.opacity;
+            ctx.restore();
+          });
+        }
+      }
+
+      triggerLaunchAnimation() {
+        this.launchAnimation.active = true;
+        this.launchAnimation.startTime = Date.now();
+      }
+    }
+
+    class Ship {
+      constructor(startX, startY, target, player) {
+        this.x = startX;
+        this.y = startY;
+        this.target = target;
+        this.player = player;
+        this.speed = NOMINAL_SHIP_SPEED * 1.5;
+        this.smokeTrail = [];
+        this.smokeTimer = 0;
+        const dx = target.x - startX;
+        const dy = target.y - startY;
+        this.rotation = Math.atan2(dy, dx);
+      }
+
+      update() {
+        const dx = this.target.x - this.x;
+        const dy = this.target.y - this.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (this.target instanceof BasePlanet && this.target.player !== this.player && !this.target.destroyed && distance <= this.target.radius + this.speed) {
+          this.target.health -= 1;
+          playBaseHitBoom();
+          if (this.target.health <= 0) {
+            this.target.destroyed = true;
+            for (let i = 0; i < 5; i++) {
+              const angle = Math.random() * Math.PI * 2;
+              const speed = 1 + Math.random() * 2;
+              const rotationSpeed = (Math.random() - 0.5) * 0.1;
+              destroyedPlanetFragments.push(new PlanetFragment(this.target.x, this.target.y, 5 + Math.random() * 5, angle, speed, rotationSpeed, this.target.color));
+            }
+          }
+          const index = ships.indexOf(this);
+          if (index > -1) ships.splice(index, 1);
+          return;
+        } else if (this.target instanceof ResourcePlanet && distance <= this.target.radius + this.speed) {
+          if (this.player === 1) this.target.player1Ships += 1;
+          else this.target.player2Ships += 1;
+          const index = ships.indexOf(this);
+          if (index > -1) ships.splice(index, 1);
+          return;
+        }
+
+        const angle = Math.atan2(dy, dx);
+        this.x += Math.cos(angle) * this.speed;
+        this.y += Math.sin(angle) * this.speed;
+
+        this.smokeTimer += 1;
+        const smokeInterval = (this.target instanceof BasePlanet && this.target.player !== this.player) ? 8 : 5;
+        if (this.smokeTimer >= smokeInterval) {
+          this.smokeTrail.push({ x: this.x - Math.cos(this.rotation) * 6, y: this.y - Math.sin(this.rotation) * 6, opacity: 0.8 });
+          this.smokeTimer = 0;
+        }
+        this.smokeTrail.forEach(smoke => smoke.opacity -= 0.0125);
+        this.smokeTrail = this.smokeTrail.filter(smoke => smoke.opacity > 0);
+      }
+
+      draw() {
+        const showFlame = Math.random() < 0.5;
+        drawShip(this.x, this.y, this.rotation, showFlame, 1.2, this.target, this.player);
+
+        this.smokeTrail.forEach(smoke => {
+          ctx.beginPath();
+          ctx.arc(smoke.x, smoke.y, 2, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(128, 128, 128, ${smoke.opacity})`;
+          ctx.fill();
+        });
+      }
+    }
+
+    class ResourceShip {
+      constructor(startX, startY, targetX, targetY, color, resource, player, speed) {
+        this.x = startX;
+        this.y = startY;
+        this.targetX = targetX;
+        this.targetY = targetY;
+        this.color = color;
+        this.resource = resource;
+        this.player = player;
+        this.speed = speed || NOMINAL_SHIP_SPEED;
+        this.smokeTrail = [];
+        this.smokeTimer = 0;
+        const dx = targetX - startX;
+        const dy = targetY - startY;
+        this.rotation = Math.atan2(dy, dx);
+      }
+
+      update() {
+        const targetBase = basePlanets.find(b => b.player === this.player && !b.destroyed);
+        if (!targetBase || targetBase.destroyed) {
+          const index = resourceShips.indexOf(this);
+          if (index > -1) resourceShips.splice(index, 1);
+          return;
+        }
+        const dx = this.targetX - this.x;
+        const dy = this.targetY - this.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance <= targetBase.radius + this.speed) {
+          if (this.resource !== "None") {
+            const resourceData = resources.find(r => r.name === this.resource);
+            targetBase.resources[this.resource] = (targetBase.resources[this.resource] || 0) + 1;
+            playBeep(resourceData.trill[0], 50, 'square', 0.1);
+            setTimeout(() => playBeep(resourceData.trill[1], 50, 'square', 0.1), 50);
+            setTimeout(() => playBeep(resourceData.trill[2], 100, 'square', 0.1), 100);
+          }
+          const index = resourceShips.indexOf(this);
+          if (index > -1) resourceShips.splice(index, 1);
+          return;
+        }
+        const angle = Math.atan2(dy, dx);
+        this.x += Math.cos(angle) * this.speed;
+        this.y += Math.sin(angle) * this.speed;
+
+        this.smokeTimer += 1;
+        if (this.smokeTimer >= 5) {
+          this.smokeTrail.push({ x: this.x - Math.cos(this.rotation) * 6, y: this.y - Math.sin(this.rotation) * 6, opacity: 0.8 });
+          this.smokeTimer = 0;
+        }
+        this.smokeTrail.forEach(smoke => smoke.opacity -= 0.0125);
+        this.smokeTrail = this.smokeTrail.filter(smoke => smoke.opacity > 0);
+      }
+
+      draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.rotation);
+        ctx.scale(1.2, 1.2);
+
+        ctx.beginPath();
+        ctx.moveTo(6, 0);
+        ctx.lineTo(-6, -4);
+        ctx.lineTo(-6, 4);
+        ctx.closePath();
+        ctx.fillStyle = shadeColor("#222222", this.color);
+        ctx.fill();
+        ctx.strokeStyle = this.color;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        const showFlame = Math.random() < 0.5;
+        if (showFlame) {
+          ctx.beginPath();
+          ctx.moveTo(-7.2, -2.4);
+          ctx.lineTo(-12, 0);
+          ctx.lineTo(-7.2, 2.4);
+          ctx.strokeStyle = "#FF8800";
+          ctx.stroke();
+        }
+
+        ctx.restore();
+
+        this.smokeTrail.forEach(smoke => {
+          ctx.beginPath();
+          ctx.arc(smoke.x, smoke.y, 2, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(128, 128, 128, ${smoke.opacity})`;
+          ctx.fill();
+        });
+      }
+    }
+
+    class BackgroundStar {
+      constructor() {
+        this.x = Math.random() * GAME_WIDTH;
+        this.y = Math.random() * GAME_HEIGHT;
+        this.size = 1 + Math.random();
+        this.baseColor = Math.random() < 0.5 ? "#6688AA" : "#AAAA66";
+        this.opacity = 0.5 + Math.random() * 0.5;
+        this.twinkleSpeed = 0.0025 + Math.random() * 0.005;
+      }
+
+      draw() {
+        this.opacity = 0.5 + Math.sin(Date.now() * this.twinkleSpeed) * 0.25;
+        ctx.fillStyle = `${this.baseColor}${Math.floor(this.opacity * 255).toString(16).padStart(2, '0')}`;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function drawUnmutedIcon(x, y, size) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(size / 20, size / 20);
+
+      ctx.beginPath();
+      ctx.moveTo(2, 6);
+      ctx.lineTo(8, 2);
+      ctx.lineTo(8, 18);
+      ctx.lineTo(2, 14);
+      ctx.closePath();
+      ctx.fillStyle = "#FFFFFF";
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(12, 10, 2, -Math.PI / 4, Math.PI / 4);
+      ctx.strokeStyle = "#FFFFFF";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(14, 10, 4, -Math.PI / 4, Math.PI / 4);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(16, 10, 6, -Math.PI / 4, Math.PI / 4);
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    function drawMutedIcon(x, y, size) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(size / 20, size / 20);
+
+      ctx.beginPath();
+      ctx.moveTo(2, 6);
+      ctx.lineTo(8, 2);
+      ctx.lineTo(8, 18);
+      ctx.lineTo(2, 14);
+      ctx.closePath();
+      ctx.fillStyle = "#FFFFFF";
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.moveTo(4, 6);
+      ctx.lineTo(10, 14);
+      ctx.moveTo(10, 6);
+      ctx.lineTo(4, 14);
+      ctx.strokeStyle = "#FF0000";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    const resources = [
+      { name: "None", color: "#808080", trill: [110.00, 146.83, 174.61] },
+      { name: "Fuel", color: "#FFD700", trill: [130.81, 174.61, 220.00] },
+      { name: "Produce", color: "#00FF00", trill: [196.00, 246.94, 293.66] },
+      { name: "Metal", color: "#00FFFF", trill: [146.83, 164.81, 196.00] }
+    ];
+
+    const basePlanets = [
+      new BasePlanet(100, 620, 50, "#FF00FF", 100, 1),
+      new BasePlanet(1180, 100, 50, "#FF8800", 100, 2)
+    ];
+
+    const resourcePlanets = [];
+    let planetReplacementQueue = [];
+
+    const backgroundStars = [];
+    const numStars = 200;
+
+    const ships = [];
+    const resourceShips = [];
+    const explosions = [];
+    const destroyedPlanetFragments = [];
+
+    let aiLaunchTimer = 120;
+    const aiLaunchInterval = () => 120 + Math.floor(Math.random() * 181);
+
+    let gameStarted = false;
+    let player1Control = "Human";
+    let player2Control = "AI";
+    let gameOver = false;
+    let winner = null;
+
+    let holdStart = null;
+    let holdTimer = null;
+    let boostCount = 0;
+    let lastBoostCount = -1;
+
+    const predefinedMoods = [
+      { name: "Custom", aggressiveness: 0.5, stayalive: 0.5, patience: 0.5, description: "User-defined settings" },
+      { name: "Cautious", aggressiveness: 0.2, stayalive: 0.8, patience: 0.7, description: "Defensive, patient play" },
+      { name: "Opportunist", aggressiveness: 0.8, stayalive: 0.6, patience: 0.2, description: "Quick strike focus" },
+      { name: "Builder", aggressiveness: 0.3, stayalive: 0.7, patience: 0.9, description: "Resource control priority" },
+      { name: "Balanced", aggressiveness: 0.5, stayalive: 0.5, patience: 0.5, description: "Even strategy mix" },
+      { name: "Berserker", aggressiveness: 1.0, stayalive: 0.0, patience: 0.0, description: "All-out attack" },
+      { name: "Survivor", aggressiveness: 0.0, stayalive: 1.0, patience: 0.5, description: "Pure defense focus" },
+      { name: "Tactician", aggressiveness: 0.6, stayalive: 0.4, patience: 0.8, description: "Calculated aggressive moves" },
+      { name: "Impulsive", aggressiveness: 0.7, stayalive: 0.3, patience: 0.1, description: "Rapid, risky attacks" }
+    ];
+    let aiMood = { aggressiveness: 0.5, stayalive: 0.5, patience: 0.5 };
+    let selectedMoodIndex = 0;
+
+    function updateExplosions() {
+      explosions.forEach((exp, index) => {
+        exp.radius += 2;
+        exp.timer -= 1;
+        if (exp.timer <= 0) explosions.splice(index, 1);
+      });
+    }
+
+    function drawExplosions() {
+      explosions.forEach(exp => {
+        ctx.beginPath();
+        ctx.arc(exp.x, exp.y, exp.radius, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 100, 0, ${exp.timer / 60})`;
+        ctx.fill();
+      });
+    }
+
+    function updateDestroyedPlanetFragments() {
+      destroyedPlanetFragments.forEach((frag, index) => {
+        frag.update();
+        if (frag.opacity <= 0) destroyedPlanetFragments.splice(index, 1);
+      });
+    }
+
+    function drawDestroyedPlanetFragments() {
+      destroyedPlanetFragments.forEach(frag => frag.draw());
+    }
+
+    function createResourcePlanet(x, y, resourceType = null) {
+      const radius = 14.4 + Math.random() * 4.32;
+      const mass = 10 + Math.random() * 20;
+      const quantity = 10 * (0.8 + Math.random() * 0.4);
+
+      let resource;
+      if (resourceType) {
+        resource = resources.find(r => r.name === resourceType);
+      } else {
+        const resourceCounts = { Fuel: 0, Produce: 0, Metal: 0 };
+        resourcePlanets.forEach(p => {
+          if (p.resource !== "None") resourceCounts[p.resource]++;
+        });
+        const minCount = Math.min(...Object.values(resourceCounts));
+        const leastResources = Object.keys(resourceCounts).filter(r => resourceCounts[r] === minCount);
+        const chosenResource = leastResources[Math.floor(Math.random() * leastResources.length)];
+        resource = resources.find(r => r.name === chosenResource);
+      }
+
+      let tooClose;
+      let attempts = 0;
+      do {
+        tooClose = false;
+        if (attempts > 0) {
+          x = Math.max(50, Math.min(GAME_WIDTH - 50, x + (Math.random() - 0.5) * 50));
+          y = Math.max(50, Math.min(GAME_HEIGHT - 50, y + (Math.random() - 0.5) * 50));
+        }
+        for (const p of resourcePlanets) {
+          const dx = p.x - x;
+          const dy = p.y - y;
+          if (Math.sqrt(dx * dx + dy * dy) < MIN_PLANET_DISTANCE) {
+            tooClose = true;
+            break;
+          }
+        }
+        attempts++;
+      } while (tooClose && attempts < 10);
+
+      const newPlanet = new ResourcePlanet(x, y, radius, resource.color, mass, resource.name, quantity);
+      resourcePlanets.push(newPlanet);
+      return newPlanet;
+    }
+
+    function updatePlanetReplacements() {
+      planetReplacementQueue.forEach((entry, index) => {
+        entry.timer -= 1000 / 60;
+        if (entry.timer <= 0) {
+          createResourcePlanet(entry.x, entry.y);
+          planetReplacementQueue.splice(index, 1);
+        }
+      });
+    }
+
+    function startGame() {
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      
+      // Stop existing audio
+      if (ambientOscillators.length > 0) {
+        ambientOscillators.forEach(osc => osc.stop());
+        clearTimeout(ambientTimeout);
+        ambientOscillators = [];
+        ambientGainNodes = [];
+      }
+      if (backgroundOscillator) {
+        backgroundOscillator.stop();
+        clearTimeout(backgroundTimeout);
+        backgroundOscillator = null;
+        backgroundGainNode = null;
+      }
+
+      // Reset game states
+      gameStarted = true;
+      isPaused = false;
+      gameOver = false;
+      winner = null;
+      
+      // Clear arrays
+      ships.length = 0;
+      resourceShips.length = 0;
+      resourcePlanets.length = 0;
+      explosions.length = 0;
+      planetReplacementQueue.length = 0;
+      destroyedPlanetFragments.length = 0;
+      
+      // Reset base planets
+      basePlanets.length = 0;
+      basePlanets.push(new BasePlanet(100, 620, 50, "#FF00FF", 100, 1));
+      basePlanets.push(new BasePlanet(1180, 100, 50, "#FF8800", 100, 2));
+      basePlanets[0].resources = { Fuel: 6, Produce: 6, Metal: 6 };
+      basePlanets[1].resources = { Fuel: 6, Produce: 6, Metal: 6 };
+      basePlanets[0].health = 10;
+      basePlanets[1].health = 10;
+      basePlanets[0].destroyed = false;
+      basePlanets[1].destroyed = false;
+      basePlanets[0].resourceTimer = 0;
+      basePlanets[1].resourceTimer = 0;
+      
+      aiLaunchTimer = 120;
+      if (holdTimer) clearInterval(holdTimer);
+      holdStart = null;
+      boostCount = 0;
+      lastBoostCount = -1;
+
+      // Start audio
+      startAmbientSounds();
+      playBackgroundMusic();
+
+      function createResourcePlanets() {
+        resourcePlanets.length = 0;
+        const startX = 0;
+        const startY = 0;
+        const endX = GAME_WIDTH;
+        const endY = GAME_HEIGHT;
+
+        for (let i = 0; i < DESIRED_RESOURCE_PLANETS; i++) {
+          const t = (i + 1) / (DESIRED_RESOURCE_PLANETS + 1);
+          let x = startX + t * (endX - startX);
+          let y = startY + t * (endY - startY);
+          const offsetX = (Math.random() - 0.5) * 100;
+          const offsetY = (Math.random() - 0.5) * 100;
+          x = Math.max(50, Math.min(GAME_WIDTH - 50, x + offsetX));
+          y = Math.max(50, Math.min(GAME_HEIGHT - 50, y + offsetY));
+
+          const targetBase = Math.random() < 0.5 ? basePlanets[0] : basePlanets[1];
+          const dx = targetBase.x - x;
+          const dy = targetBase.y - y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          const shiftFactor = (Math.random() < 0.5 ? -0.1 : 0.1);
+          const newDistance = distance * (1 + shiftFactor);
+          const angle = Math.atan2(dy, dx);
+          x = targetBase.x - Math.cos(angle) * newDistance;
+          y = targetBase.y - Math.sin(angle) * newDistance;
+
+          x = Math.max(50, Math.min(GAME_WIDTH - 50, x));
+          y = Math.max(50, Math.min(GAME_HEIGHT - 50, y));
+
+          createResourcePlanet(x, y);
+        }
+      }
+
+      createResourcePlanets();
+    }
+
+    function createBackgroundStars() {
+      for (let i = 0; i < numStars; i++) {
+        backgroundStars.push(new BackgroundStar());
+      }
+    }
+
+    createBackgroundStars();
+
+    canvas.addEventListener("mousedown", (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      if (mouseX > 10 && mouseX < 30 && mouseY > 10 && mouseY < 30) {
+        isMuted = !isMuted;
+        masterGain.gain.value = isMuted ? 0 : 1;
+        return;
+      }
+
+      if (!gameStarted) {
+        if (mouseX > 50 && mouseX < 150 && mouseY > 630 && mouseY < 670) {
+          player1Control = player1Control === "Human" ? "AI" : "Human";
+        } else if (mouseX > 1130 && mouseX < 1230 && mouseY > 110 && mouseY < 150) {
+          player2Control = player2Control === "AI" ? "Human" : "AI";
+        } else if (mouseX > GAME_WIDTH / 2 - 100 && mouseX < GAME_WIDTH / 2 + 100 && mouseY > GAME_HEIGHT / 2 - 20 && mouseY < GAME_HEIGHT / 2 + 20) {
+          startGame();
+        }
+
+        const sliderX = 970;
+        const sliderY = 200;
+        const sliderHeight = 200;
+        const sliderWidth = 20;
+        const spacing = 100;
+        const traits = ["aggressiveness", "stayalive", "patience"];
+        traits.forEach((trait, i) => {
+          const x = sliderX + i * spacing;
+          if (mouseX >= x && mouseX <= x + sliderWidth && mouseY >= sliderY && mouseY <= sliderY + sliderHeight) {
+            const value = 1 - (mouseY - sliderY) / sliderHeight;
+            aiMood[trait] = Math.max(0, Math.min(1, value));
+            let matchesPredefined = predefinedMoods.some((mood, index) => 
+              index > 0 &&
+              mood.aggressiveness === aiMood.aggressiveness &&
+              mood.stayalive === aiMood.stayalive &&
+              mood.patience === aiMood.patience
+            );
+            if (!matchesPredefined) {
+              selectedMoodIndex = 0;
+              predefinedMoods[0] = { ...predefinedMoods[0], ...aiMood };
+            }
+          }
+        });
+
+        const dropdownX = sliderX;
+        const dropdownY = sliderY + sliderHeight + 40;
+        const dropdownWidth = 200;
+        const dropdownHeight = 30;
+        if (mouseX >= dropdownX && mouseX <= dropdownX + dropdownWidth && mouseY >= dropdownY && mouseY <= dropdownY + dropdownHeight) {
+          selectedMoodIndex = (selectedMoodIndex + 1) % predefinedMoods.length;
+          aiMood = { ...predefinedMoods[selectedMoodIndex] };
+        }
+        return;
+      }
+
+      let playerBase = basePlanets.find(b => b.player === 1 && !b.destroyed);
+      if (!playerBase || isPaused) return;
+
+      let target = null;
+      let cost = null;
+      let isBaseAttack = false;
+
+      for (const targetBase of basePlanets) {
+        if (targetBase.destroyed || targetBase.player === 1) continue;
+        const dx = mouseX - targetBase.x;
+        const dy = mouseY - targetBase.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance < targetBase.radius * 1.5) {
+          target = targetBase;
+          cost = shipCosts.enemyBase;
+          isBaseAttack = true;
+          break;
+        }
+      }
+
+      if (!target) {
+        for (const planet of resourcePlanets) {
+          const dx = mouseX - planet.x;
+          const dy = mouseY - planet.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          if (distance < planet.radius * 1.5) {
+            target = planet;
+            cost = shipCosts.resourcePlanet;
+            break;
+          }
+        }
+      }
+
+      if (!target) {
+        const dx = mouseX - playerBase.x;
+        const dy = mouseY - playerBase.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance < playerBase.radius * 1.5 && playerBase.health < 10) {
+          target = "heal";
+          cost = shipCosts.healBase;
+        }
+      }
+
+      if (target && cost) {
+        holdStart = Date.now();
+        boostCount = 0;
+        lastBoostCount = -1;
+        target.boostIndicators = [];
+
+        holdTimer = setInterval(() => {
+          if (holdStart === null) {
+            clearInterval(holdTimer);
+            return;
+          }
+
+          const holdTime = Date.now() - holdStart;
+          if (holdTime >= SHIP_CREATE_HOLD_TIME) {
+            boostCount = Math.min(4, Math.floor((holdTime - SHIP_CREATE_HOLD_TIME) / SHIP_CREATE_HOLD_TIME) + 1);
+            if (boostCount > lastBoostCount) {
+              playSpeedBoostTrill(boostCount);
+              const x = target.x + target.radius + 10 + (boostCount - 1) * 12;
+              target.boostIndicators.push({ x, y: target.y, opacity: 1 });
+              lastBoostCount = boostCount;
+
+              const totalFuelCost = cost.Fuel + boostCount;
+              if (playerBase.resources.Fuel < totalFuelCost || boostCount === 4) {
+                launchShip(playerBase, target, cost, boostCount, isBaseAttack);
+                clearInterval(holdTimer);
+                holdStart = null;
+              }
+            }
+          }
+        }, 50);
+      }
+    });
+
+    canvas.addEventListener("mouseup", (e) => {
+      if (holdStart === null && !gameOver && !isPaused) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      // Game Over Return to Title
+      if (gameOver && 
+          mouseX > GAME_WIDTH / 2 - 100 && mouseX < GAME_WIDTH / 2 + 100 && 
+          mouseY > GAME_HEIGHT / 2 + 90 && mouseY < GAME_HEIGHT / 2 + 130) {
+        gameStarted = false;
+        gameOver = false;
+        winner = null;
+        isPaused = true;
+        
+        // Clean up audio
+        if (ambientOscillators.length > 0) {
+          ambientOscillators.forEach(osc => osc.stop());
+          clearTimeout(ambientTimeout);
+          ambientOscillators = [];
+          ambientGainNodes = [];
+        }
+        if (backgroundOscillator) {
+          backgroundOscillator.stop();
+          clearTimeout(backgroundTimeout);
+          backgroundOscillator = null;
+          backgroundGainNode = null;
+        }
+        
+        // Clear game objects
+        ships.length = 0;
+        resourceShips.length = 0;
+        resourcePlanets.length = 0;
+        explosions.length = 0;
+        planetReplacementQueue.length = 0;
+        destroyedPlanetFragments.length = 0;
+        
+        // Reset base planets
+        basePlanets.length = 0;
+        basePlanets.push(new BasePlanet(100, 620, 50, "#FF00FF", 100, 1));
+        basePlanets.push(new BasePlanet(1180, 100, 50, "#FF8800", 100, 2));
+        basePlanets[0].resources = { Fuel: 6, Produce: 6, Metal: 6 };
+        basePlanets[1].resources = { Fuel: 6, Produce: 6, Metal: 6 };
+        basePlanets[0].health = 10;
+        basePlanets[1].health = 10;
+        basePlanets[0].destroyed = false;
+        basePlanets[1].destroyed = false;
+        
+        if (holdTimer) clearInterval(holdTimer);
+        holdStart = null;
+        boostCount = 0;
+        lastBoostCount = -1;
+        return;
+      }
+
+      // Paused Return to Title
+      if (isPaused && gameStarted && 
+          mouseX > GAME_WIDTH / 2 - 100 && mouseX < GAME_WIDTH / 2 + 100 && 
+          mouseY > GAME_HEIGHT / 2 + 20 && mouseY < GAME_HEIGHT / 2 + 60) {
+        gameStarted = false;
+        gameOver = false;
+        winner = null;
+        isPaused = true;
+        
+        // Clean up audio
+        if (ambientOscillators.length > 0) {
+          ambientOscillators.forEach(osc => osc.stop());
+          clearTimeout(ambientTimeout);
+          ambientOscillators = [];
+          ambientGainNodes = [];
+        }
+        if (backgroundOscillator) {
+          backgroundOscillator.stop();
+          clearTimeout(backgroundTimeout);
+          backgroundOscillator = null;
+          backgroundGainNode = null;
+        }
+        
+        // Clear game objects
+        ships.length = 0;
+        resourceShips.length = 0;
+        resourcePlanets.length = 0;
+        explosions.length = 0;
+        planetReplacementQueue.length = 0;
+        destroyedPlanetFragments.length = 0;
+        
+        // Reset base planets
+        basePlanets.length = 0;
+        basePlanets.push(new BasePlanet(100, 620, 50, "#FF00FF", 100, 1));
+        basePlanets.push(new BasePlanet(1180, 100, 50, "#FF8800", 100, 2));
+        basePlanets[0].resources = { Fuel: 6, Produce: 6, Metal: 6 };
+        basePlanets[1].resources = { Fuel: 6, Produce: 6, Metal: 6 };
+        basePlanets[0].health = 10;
+        basePlanets[1].health = 10;
+        basePlanets[0].destroyed = false;
+        basePlanets[1].destroyed = false;
+        
+        if (holdTimer) clearInterval(holdTimer);
+        holdStart = null;
+        boostCount = 0;
+        lastBoostCount = -1;
+        return;
+      }
+
+      if (!gameStarted) {
+        clearInterval(holdTimer);
+        holdStart = null;
+        return;
+      }
+
+      let playerBase = basePlanets.find(b => b.player === 1 && !b.destroyed);
+      if (!playerBase) {
+        clearInterval(holdTimer);
+        holdStart = null;
+        return;
+      }
+
+      let target = null;
+      let cost = null;
+      let isBaseAttack = false;
+
+      for (const targetBase of basePlanets) {
+        if (targetBase.destroyed || targetBase.player === 1) continue;
+        const dx = mouseX - targetBase.x;
+        const dy = mouseY - targetBase.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance < targetBase.radius * 1.5) {
+          target = targetBase;
+          cost = shipCosts.enemyBase;
+          isBaseAttack = true;
+          break;
+        }
+      }
+
+      if (!target) {
+        for (const planet of resourcePlanets) {
+          const dx = mouseX - planet.x;
+          const dy = mouseY - planet.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          if (distance < planet.radius * 1.5) {
+            target = planet;
+            cost = shipCosts.resourcePlanet;
+            break;
+          }
+        }
+      }
+
+      if (!target) {
+        const dx = mouseX - playerBase.x;
+        const dy = mouseY - playerBase.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance < playerBase.radius * 1.5 && playerBase.health < 10) {
+          target = "heal";
+          cost = shipCosts.healBase;
+        }
+      }
+
+      if (target && cost) {
+        const holdTime = Date.now() - holdStart;
+        if (holdTime < SHIP_CREATE_HOLD_TIME) {
+          launchShip(playerBase, target, cost, 0, isBaseAttack);
+        } else {
+          launchShip(playerBase, target, cost, boostCount, isBaseAttack);
+        }
+      }
+
+      clearInterval(holdTimer);
+      holdStart = null;
+    });
+
+    function launchShip(playerBase, target, cost, boostCount, isBaseAttack) {
+      const totalFuelCost = cost.Fuel + boostCount;
+      if (playerBase.resources.Fuel >= totalFuelCost && 
+          playerBase.resources.Produce >= cost.Produce && 
+          playerBase.resources.Metal >= cost.Metal) {
+        playerBase.useResource("Fuel", totalFuelCost);
+        playerBase.useResource("Produce", cost.Produce);
+        playerBase.useResource("Metal", cost.Metal);
+        
+        if (target === "heal") {
+          playerBase.health = Math.min(10, playerBase.health + 1);
+          playBeep(440, 100, 'square', 0.1);
+        } else {
+          playerBase.triggerLaunchAnimation();
+          const angle = Math.atan2(target.y - playerBase.y, target.x - playerBase.x);
+          const startX = playerBase.x + Math.cos(angle) * playerBase.radius;
+          const startY = playerBase.y + Math.sin(angle) * playerBase.radius;
+          const baseSpeed = NOMINAL_SHIP_SPEED * 1.5;
+          const speed = baseSpeed * (1 + boostCount * 0.25);
+          ships.push(new Ship(startX, startY, target, 1));
+          ships[ships.length - 1].speed = speed;
+          if (isBaseAttack) playBaseAttackTrill();
+          else playChiptuneNoise(288, 0.15, { start: 2.0, end: 3.0 });
+        }
+      } else {
+        playNoResourcesTrill();
+      }
+    }
+
+    canvas.addEventListener("mousemove", (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      let clickable = false;
+      if (mouseX > 10 && mouseX < 30 && mouseY > 10 && mouseY < 30) clickable = true;
+      else if (!gameStarted) {
+        if (mouseX > 50 && mouseX < 150 && mouseY > 630 && mouseY < 670) clickable = true;
+        else if (mouseX > 1130 && mouseX < 1230 && mouseY > 110 && mouseY < 150) clickable = true;
+        else if (mouseX > GAME_WIDTH / 2 - 100 && mouseX < GAME_WIDTH / 2 + 100 && mouseY > GAME_HEIGHT / 2 - 20 && mouseY < GAME_HEIGHT / 2 + 20) clickable = true;
+        const sliderX = 970;
+        const sliderY = 200;
+        const sliderHeight = 200;
+        const sliderWidth = 20;
+        const spacing = 100;
+        for (let i = 0; i < 3; i++) {
+          const x = sliderX + i * spacing;
+          if (mouseX >= x && mouseX <= x + sliderWidth && mouseY >= sliderY && mouseY <= sliderY + sliderHeight) {
+            clickable = true;
+            break;
+          }
+        }
+        const dropdownX = sliderX;
+        const dropdownY = sliderY + sliderHeight + 40;
+        const dropdownWidth = 200;
+        const dropdownHeight = 30;
+        if (mouseX >= dropdownX && mouseX <= dropdownX + dropdownWidth && mouseY >= dropdownY && mouseY <= dropdownY + dropdownHeight) {
+          clickable = true;
+        }
+      } else if (isPaused || gameOver) {
+        if (mouseX > GAME_WIDTH / 2 - 100 && mouseX < GAME_WIDTH / 2 + 100 && 
+            ((isPaused && mouseY > GAME_HEIGHT / 2 + 20 && mouseY < GAME_HEIGHT / 2 + 60) ||
+             (gameOver && mouseY > GAME_HEIGHT / 2 + 90 && mouseY < GAME_HEIGHT / 2 + 130))) {
+          clickable = true;
+        }
+      }
+
+      canvas.style.cursor = clickable ? "pointer" : "default";
+    });
+
+    let keys = {};
+    document.addEventListener("keydown", (e) => {
+      keys[e.key] = true;
+      if (e.key === " ") {
+        if (gameStarted) {
+          if (!isPaused && backgroundOscillator) {
+            backgroundOscillator.stop();
+            clearTimeout(backgroundTimeout);
+            backgroundOscillator = null;
+            backgroundGainNode = null;
+          } else if (isPaused && !backgroundOscillator) {
+            playBackgroundMusic();
+          }
+          if (!isPaused && ambientOscillators.length > 0) {
+            ambientOscillators.forEach(osc => osc.stop());
+            clearTimeout(ambientTimeout);
+            ambientOscillators = [];
+            ambientGainNodes = [];
+          } else if (isPaused && ambientOscillators.length === 0) {
+            startAmbientSounds();
+          }
+          isPaused = !isPaused;
+        }
+      } else if (e.key === "Enter" && !gameStarted) {
+        startGame();
+      }
+    });
+    document.addEventListener("keyup", (e) => keys[e.key] = false);
+
+    let isPaused = true;
+
+    function update() {
+      if (gameOver || isPaused || !gameStarted) return;
+
+      basePlanets.forEach(planet => planet.update());
+      resourcePlanets.forEach(planet => planet.update());
+      ships.forEach(ship => ship.update());
+      resourceShips.forEach(ship => ship.update());
+      updateExplosions();
+      updatePlanetReplacements();
+      updateDestroyedPlanetFragments();
+
+      const destroyedCount = basePlanets.reduce((count, base) => count + (base.destroyed ? 1 : 0), 0);
+      if (destroyedCount >= basePlanets.length - 1) {
+        gameOver = true;
+        winner = basePlanets.find(b => !b.destroyed) ? (basePlanets.find(b => !b.destroyed).player === 1 ? "Player 1" : "Player 2") : "Player 2";
+        if (ambientOscillators.length > 0) {
+          ambientOscillators.forEach(osc => osc.stop());
+          clearTimeout(ambientTimeout);
+          ambientOscillators = [];
+          ambientGainNodes = [];
+        }
+        if (backgroundOscillator) {
+          backgroundOscillator.stop();
+          clearTimeout(backgroundTimeout);
+          backgroundOscillator = null;
+          backgroundGainNode = null;
+        }
+        playVictoryFanfare();
+      }
+
+      if (player2Control === "AI") {
+        aiLaunchTimer -= 1;
+        if (aiLaunchTimer <= 0) {
+          const aiBase = basePlanets.find(b => b.player === 2 && !b.destroyed);
+          if (aiBase) {
+            const playerBase = basePlanets.find(b => b.player === 1 && !b.destroyed);
+            const playerControlledPlanets = resourcePlanets.filter(p => p.player1Ships > p.player2Ships);
+            const aiControlledPlanets = resourcePlanets.filter(p => p.player2Ships > p.player1Ships);
+            const contestedPlanets = resourcePlanets.filter(p => p.player1Ships === p.player2Ships && p.player1Ships > 0);
+            const mostContestedPlanet = contestedPlanets.length > 0 ? 
+                                       contestedPlanets[Math.floor(Math.random() * contestedPlanets.length)] :
+                                       playerControlledPlanets.reduce((max, p) => p.player1Ships - p.player2Ships < (max?.player1Ships - max?.player2Ships || Infinity) ? p : max, null);
+            const randomPlanet = resourcePlanets[Math.floor(Math.random() * resourcePlanets.length)];
+
+            const canAfford = (cost) => 
+              aiBase.resources.Fuel >= cost.Fuel && 
+              aiBase.resources.Produce >= cost.Produce && 
+              aiBase.resources.Metal >= cost.Metal;
+
+            const launchAttack = (target, cost, isBaseAttack) => {
+              aiBase.useResource("Fuel", cost.Fuel);
+              aiBase.useResource("Produce", cost.Produce);
+              aiBase.useResource("Metal", cost.Metal);
+              aiBase.triggerLaunchAnimation();
+              const angle = Math.atan2(target.y - aiBase.y, target.x - aiBase.x);
+              const startX = aiBase.x + Math.cos(angle) * aiBase.radius;
+              const startY = aiBase.y + Math.sin(angle) * aiBase.radius;
+              ships.push(new Ship(startX, startY, target, 2));
+              if (isBaseAttack) playBaseAttackTrill();
+              else playChiptuneNoise(288, 0.15, { start: 2.0, end: 3.0 });
+            };
+
+            const healBase = () => {
+              aiBase.useResource("Fuel", shipCosts.healBase.Fuel);
+              aiBase.useResource("Produce", shipCosts.healBase.Produce);
+              aiBase.useResource("Metal", shipCosts.healBase.Metal);
+              aiBase.health = Math.min(10, aiBase.health + 1);
+              playBeep(440, 100, 'square', 0.1);
+            };
+
+            const canHeal = canAfford(shipCosts.healBase);
+            const canAttackBase = canAfford(shipCosts.enemyBase);
+            const canCapturePlanet = canAfford(shipCosts.resourcePlanet);
+
+            const healthThreshold = Math.round(3 + aiMood.stayalive * 4);
+            const baseAttackWeight = aiMood.aggressiveness * 0.8;
+            const healWeight = aiMood.stayalive * (aiBase.health < healthThreshold ? 1.0 : 0.2);
+            
+            const controlRatio = aiControlledPlanets.length / (playerControlledPlanets.length + 1);
+            const captureWeight = (playerControlledPlanets.length > 0 || contestedPlanets.length > 0 ? 0.6 : 0.3) * 
+                                 (1 - aiMood.patience) * 
+                                 (1 + (1 - controlRatio) * 2) * 
+                                 (contestedPlanets.length > 0 ? 1.5 : 1);
+            const waitWeight = aiMood.patience * (canAttackBase || canCapturePlanet || canHeal ? 0.1 : 0.8);
+
+            const totalWeight = baseAttackWeight + healWeight + captureWeight + waitWeight;
+            const roll = Math.random() * totalWeight;
+
+            if (healWeight > 0 && canHeal && aiBase.health < healthThreshold && roll < healWeight) {
+              healBase();
+            } else if (baseAttackWeight > 0 && canAttackBase && playerBase && roll < baseAttackWeight + healWeight) {
+              launchAttack(playerBase, shipCosts.enemyBase, true);
+            } else if (captureWeight > 0 && canCapturePlanet && roll < baseAttackWeight + healWeight + captureWeight) {
+              const target = mostContestedPlanet || randomPlanet;
+              if (target) launchAttack(target, shipCosts.resourcePlanet, false);
+            } else {
+              const waitTime = Math.round(30 + aiMood.patience * 90);
+              aiLaunchTimer = waitTime;
+              return;
+            }
+
+            aiLaunchTimer = aiLaunchInterval();
+          } else {
+            aiLaunchTimer = aiLaunchInterval();
+          }
+        }
+      }
+    }
+
+    function draw() {
+      ctx.fillStyle = "#111111";
+      ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+      backgroundStars.forEach(star => star.draw());
+      drawExplosions();
+      drawDestroyedPlanetFragments();
+
+      if (isMuted) {
+        drawMutedIcon(10, 10, 20);
+      } else {
+        drawUnmutedIcon(10, 10, 20);
+      }
+
+      if (!gameStarted) {
+        basePlanets.forEach(planet => planet.draw());
+        ctx.fillStyle = "#FFFFFF";
+        ctx.font = "24px 'Courier New'";
+        ctx.textAlign = "center";
+        ctx.fillText(player1Control, 100, 650);
+        ctx.fillText(player2Control, 1180, 130);
+        ctx.fillText("Click to Start", GAME_WIDTH / 2, GAME_HEIGHT / 2);
+
+        const sliderX = 970;
+        const sliderY = 200;
+        const sliderHeight = 200;
+        const sliderWidth = 20;
+        const spacing = 100;
+
+        ctx.font = "18px 'Courier New'";
+        ctx.fillText("Aggress", sliderX, sliderY - 10);
+        ctx.fillText("StayAlive", sliderX + spacing, sliderY - 10);
+        ctx.fillText("Patience", sliderX + 2 * spacing, sliderY - 10);
+
+        const traits = ["aggressiveness", "stayalive", "patience"];
+        traits.forEach((trait, i) => {
+          const x = sliderX + i * spacing;
+          ctx.fillStyle = "#444444";
+          ctx.fillRect(x, sliderY, sliderWidth, sliderHeight);
+          const value = aiMood[trait];
+          const fillHeight = value * sliderHeight;
+          ctx.fillStyle = "#00FFFF";
+          ctx.fillRect(x, sliderY + sliderHeight - fillHeight, sliderWidth, fillHeight);
+          ctx.fillStyle = "#FFFFFF";
+          ctx.fillText(value.toFixed(2), x + sliderWidth / 2, sliderY + sliderHeight + 20);
+        });
+
+        const dropdownX = sliderX;
+        const dropdownY = sliderY + sliderHeight + 40;
+        const dropdownWidth = 200;
+        const dropdownHeight = 30;
+        ctx.fillStyle = "#444444";
+        ctx.fillRect(dropdownX, dropdownY, dropdownWidth, dropdownHeight);
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillText(predefinedMoods[selectedMoodIndex].name, dropdownX + dropdownWidth / 2, dropdownY + 20);
+      } else {
+        update();
+        basePlanets.forEach(planet => planet.draw());
+        resourcePlanets.forEach(planet => planet.draw());
+        ships.forEach(ship => ship.draw());
+        resourceShips.forEach(ship => ship.draw());
+
+        if (gameOver) {
+          ctx.fillStyle = "#FF0000";
+          ctx.font = "72px 'Courier New'";
+          ctx.textAlign = "center";
+          ctx.fillText("GAME OVER", GAME_WIDTH / 2, GAME_HEIGHT / 2 - 50);
+          ctx.fillStyle = "#FFFFFF";
+          ctx.font = "48px 'Courier New'";
+          ctx.fillText(`${winner} WINS!`, GAME_WIDTH / 2, GAME_HEIGHT / 2 + 50);
+          ctx.font = "24px 'Courier New'";
+          ctx.fillText("Restart", GAME_WIDTH / 2, GAME_HEIGHT / 2 + 110);
+        } else if (isPaused) {
+          ctx.fillStyle = "#FFFFFF";
+          ctx.font = "48px 'Courier New'";
+          ctx.textAlign = "center";
+          ctx.fillText("PAUSED", GAME_WIDTH / 2, GAME_HEIGHT / 2 - 20);
+          ctx.font = "24px 'Courier New'";
+          ctx.fillText("Restart", GAME_WIDTH / 2, GAME_HEIGHT / 2 + 40);
+        }
+      }
+
+      requestAnimationFrame(draw);
+    }
+
+    draw();
+  </script>
+</body>
+</html>
