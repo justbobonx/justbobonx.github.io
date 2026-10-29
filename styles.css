@@ -249,8 +249,8 @@ img.card-shot {
   }
 
   .brand {
-    font-size: 20px;
-    line-height: 1;
+    font-size: 24px;
+    line-height: 0.8;
     max-width: none;
     flex: 1 1 100%;
   }
@@ -259,7 +259,7 @@ img.card-shot {
   .mobile-brand { display: inline; }
 
   .nav {
-    font-size: 15px;
+    font-size: 16px;
     margin-left: auto;
     margin-top: -1.15em;
   }
@@ -295,9 +295,9 @@ img.card-shot {
 
   .card-blurb,
   .card-feature .card-blurb {
-    font-size: 16px;
+    font-size: 17px;
     line-height: 0.8;
-    padding: 1.2rem 0.6rem 0.6rem;
+    padding: 0.2rem 0.5rem 0.2rem;
     display: none;
     pointer-events: auto;
   }
