@@ -19,7 +19,8 @@
       "type": "recent",
       "image": "images/Grok in the Wind.png",
       "text": "Custom white-noise machine: sixteen band-pass channels, per-band gain and slow LFOs. My windy background for days — randomize, tweak, save to JSON.",
-      "url": "https://terminalcore.com/Grok%20in%20the%20Wind.html"
+      "url": "https://terminalcore.com/Grok%20in%20the%20Wind.html",
+      "hidden":true
     },
     {
       "name": "Geocentric Heliocentric with Orbit Trails",

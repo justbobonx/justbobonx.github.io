@@ -42,6 +42,7 @@ async function loadItems() {
 
   const cascade = document.getElementById('work');
   data.projects.forEach(item => {
+    if (item.hidden) return;
     const card = document.createElement('div');
     card.className = `card card-${item.type}`;
     card.dataset.href = item.url;
