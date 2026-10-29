@@ -13,15 +13,7 @@
       "image": "images/Bio Tank.png",
       "text": "Behaviors over hardcoding. Bubbles merge, munchers almost flock, meat eaters keep the tank self-regulating. Emergent and pretty — hit tab for debug stats.",
       "url": "https://terminalcore.com/Bio%20Tank.html"
-    },
-    {
-      "name": "All We Are Is Grok in the Wind",
-      "type": "recent",
-      "image": "images/Grok in the Wind.png",
-      "text": "Custom white-noise machine: sixteen band-pass channels, per-band gain and slow LFOs. My windy background for days — randomize, tweak, save to JSON.",
-      "url": "https://terminalcore.com/Grok%20in%20the%20Wind.html",
-      "hidden":true
-    },
+    },    
     {
       "name": "Geocentric Heliocentric with Orbit Trails",
       "type": "recent",
@@ -31,10 +23,18 @@
     },
     {
       "name": "War of the Planetoids",
-      "type": "rest",
+      "type": "recent",
       "image": "images/War of the Planetoids.png",
       "text": "Arcade duel that's been on my mind for years. Circles became shapes, an AI opponent kept pace, and the sound is all HTML5 audio.",
       "url": "https://terminalcore.com/War%20of%20the%20Planetoids.html"
+    },
+    {
+      "name": "All We Are Is Grok in the Wind",
+      "type": "rest",
+      "image": "images/Grok in the Wind.png",
+      "text": "Custom white-noise machine: sixteen band-pass channels, per-band gain and slow LFOs. My windy background for days — randomize, tweak, save to JSON.",
+      "url": "https://terminalcore.com/Grok%20in%20the%20Wind.html",
+      "hidden":true
     }
   ]
 }
