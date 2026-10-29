@@ -211,7 +211,7 @@ img.card-shot {
 .go-link {
   display: none;
   margin-top: 0.2rem;
-  font-size: 0.9em;
+  font-size: 1.0em;
   color: #f2f0ec;
   text-decoration: underline;
   pointer-events: auto;
@@ -295,9 +295,9 @@ img.card-shot {
 
   .card-blurb,
   .card-feature .card-blurb {
-    font-size: 17px;
+    font-size: 19px;
     line-height: 0.8;
-    padding: 0.2rem 0.5rem 0.2rem;
+    padding: 0.2rem 0.4rem 0.2rem;
     display: none;
     pointer-events: auto;
   }
