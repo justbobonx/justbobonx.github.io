@@ -9,7 +9,7 @@
 }
 
 :root {
-  --bg: #050506;
+  --bg: #444455;
   --fg: #e6e4e0;
   --muted: #b4b0a8;
   --pad: clamp(0.75rem, 2.5vw, 1.5rem);
@@ -223,6 +223,7 @@ img.card-shot {
   padding: 1rem var(--pad) 1.75rem;
   border-top: 1px solid #1a1a1e;
   color: var(--muted);
+  background: #050506f2;
   font-size: 32px;
   display: flex;
   flex-wrap: wrap;
