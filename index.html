@@ -18,79 +18,13 @@
     </nav>
   </header>
 
-  <main class="cascade" id="work">
-    <div class="card card-feature" data-href="https://terminalcore.com/Bio%20Tank.html">
-      <div class="card-face">
-        <img class="card-shot" src="images/Bio Tank.png" alt="Bio Tank screenshot" width="1680" height="800">
-        <h2 class="card-title">Bio Tank</h2>
-        <div class="card-blurb">
-          <p>Behaviors over hardcoding. Bubbles merge, munchers almost flock, meat eaters keep the tank self-regulating. Emergent and pretty — hit tab for debug stats.</p>
-          <a class="go-link" href="https://terminalcore.com/Bio%20Tank.html" target="_blank" rel="noopener noreferrer">open →</a>
-        </div>
-      </div>
-    </div>
-
-    <div class="card card-recent" data-href="https://terminalcore.com/Grok%20in%20the%20Wind.html">
-      <div class="card-face">
-        <img class="card-shot" src="images/Grok in the Wind.png" alt="All We Are Is Grok in the Wind screenshot" width="800" height="500">
-        <h2 class="card-title">All We Are Is Grok in the Wind</h2>
-        <div class="card-blurb">
-          <p>Custom white-noise machine: sixteen band-pass channels, per-band gain and slow LFOs. My windy background for days — randomize, tweak, save to JSON.</p>
-          <a class="go-link" href="https://terminalcore.com/Grok%20in%20the%20Wind.html" target="_blank" rel="noopener noreferrer">open →</a>
-        </div>
-      </div>
-    </div>
-
-    <div class="card card-recent" data-href="https://terminalcore.com/Geocentric_Heliocentric.html">
-      <div class="card-face">
-        <img class="card-shot" src="images/Geocentric_Heliocentric.png" alt="Geocentric Heliocentric screenshot" width="800" height="500">
-        <h2 class="card-title">Geocentric Heliocentric with Orbit Trails</h2>
-        <div class="card-blurb">
-          <p>Geocentric vs heliocentric with dynamic orbit trails. Started from a one-line Grok prompt — solar_system_earth_to_sun — and grew from there.</p>
-          <a class="go-link" href="https://terminalcore.com/Geocentric_Heliocentric.html" target="_blank" rel="noopener noreferrer">open →</a>
-        </div>
-      </div>
-    </div>
-
-    <div class="card card-rest" data-href="https://terminalcore.com/War%20of%20the%20Planetoids.html">
-      <div class="card-face">
-        <img class="card-shot" src="images/War of the Planetoids.png" alt="War of the Planetoids screenshot" width="800" height="500">
-        <h2 class="card-title">War of the Planetoids</h2>
-        <div class="card-blurb">
-          <p>Arcade duel that's been on my mind for years. Circles became shapes, an AI opponent kept pace, and the sound is all HTML5 audio.</p>
-          <a class="go-link" href="https://terminalcore.com/War%20of%20the%20Planetoids.html" target="_blank" rel="noopener noreferrer">open →</a>
-        </div>
-      </div>
-    </div>
-  </main>
+  <main class="cascade" id="work"></main>
 
   <footer class="site-foot">
     <span>games · visualizations · sounds</span>
     <a href="https://x.com/just_bob" rel="noopener noreferrer" target="_blank">just_bob@X.com</a>
   </footer>
 
-  <script>
-    const isMobile = () => window.matchMedia('(max-width: 640px)').matches;
-
-    document.querySelectorAll('.card').forEach(card => {
-      card.addEventListener('click', e => {
-        if (e.target.closest('.go-link')) return;
-
-        if (isMobile()) {
-          e.preventDefault();
-          const wasOpen = card.classList.contains('open');
-          document.querySelectorAll('.card.open').forEach(c => c.classList.remove('open'));
-          if (!wasOpen) card.classList.add('open');
-        } else {
-          const href = card.dataset.href;
-          if (href) window.open(href, '_blank', 'noopener,noreferrer');
-        }
-      });
-    });
-
-    window.addEventListener('resize', () => {
-      if (!isMobile()) document.querySelectorAll('.card.open').forEach(c => c.classList.remove('open'));
-    });
-  </script>
+  <script src="site.js"></script>
 </body>
 </html>
