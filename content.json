@@ -1,0 +1,39 @@
+{
+  "news_format": {
+    "title": "NEW Stuff!",
+    "text": "New projects and tweaks land here when there's something to say."
+  },
+  "about": {
+    "text": "Hello!  I'm a (mostly former) professional SW dev with experience in everyhting from C++ to writing javascript apps.  I had mostly retired from it, but using Grok (Bot) as an assistant, I've started developing again.  The following creations are designed by me & grok (90/10) and implententd by me & grok (10/90)."
+  },
+  "projects": [
+    {
+      "name": "Bio Tank",
+      "type": "feature",
+      "image": "images/Bio Tank.png",
+      "text": "Behaviors over hardcoding. Bubbles merge, munchers almost flock, meat eaters keep the tank self-regulating. Emergent and pretty — hit tab for debug stats.",
+      "url": "https://terminalcore.com/Bio%20Tank.html"
+    },
+    {
+      "name": "All We Are Is Grok in the Wind",
+      "type": "recent",
+      "image": "images/Grok in the Wind.png",
+      "text": "Custom white-noise machine: sixteen band-pass channels, per-band gain and slow LFOs. My windy background for days — randomize, tweak, save to JSON.",
+      "url": "https://terminalcore.com/Grok%20in%20the%20Wind.html"
+    },
+    {
+      "name": "Geocentric Heliocentric with Orbit Trails",
+      "type": "recent",
+      "image": "images/Geocentric_Heliocentric.png",
+      "text": "Geocentric vs heliocentric with dynamic orbit trails. Started from a one-line Grok prompt — solar_system_earth_to_sun — and grew from there.",
+      "url": "https://terminalcore.com/Geocentric_Heliocentric.html"
+    },
+    {
+      "name": "War of the Planetoids",
+      "type": "rest",
+      "image": "images/War of the Planetoids.png",
+      "text": "Arcade duel that's been on my mind for years. Circles became shapes, an AI opponent kept pace, and the sound is all HTML5 audio.",
+      "url": "https://terminalcore.com/War%20of%20the%20Planetoids.html"
+    }
+  ]
+}
