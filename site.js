@@ -18,12 +18,30 @@ function bindCards() {
   });
 }
 
-async function loadItems() {
-  const res = await fetch('items.json');
-  const items = await res.json();
-  const cascade = document.getElementById('work');
+function renderInfo(data) {
+  const info = document.getElementById('info');
+  const source = (data.news && data.news.text) ? data.news : data.about;
+  if (!source || !source.text) {
+    info.style.display = 'none';
+    return;
+  }
 
-  items.forEach(item => {
+  let html = '';
+  if (source.title) {
+    html += `<h2 class="info-title">${source.title}</h2>`;
+  }
+  html += `<p class="info-text">${source.text}</p>`;
+  info.innerHTML = html;
+}
+
+async function loadItems() {
+  const res = await fetch('content.json');
+  const data = await res.json();
+
+  renderInfo(data);
+
+  const cascade = document.getElementById('work');
+  data.projects.forEach(item => {
     const card = document.createElement('div');
     card.className = `card card-${item.type}`;
     card.dataset.href = item.url;
