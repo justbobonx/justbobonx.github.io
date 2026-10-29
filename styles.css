@@ -212,11 +212,12 @@ img.card-shot {
 
 .go-link {
   display: none;
-  margin-top: 0.2rem;
-  font-size: 1.0em;
+  margin-top: -0.4rem;
+  font-size: 1.2em;
   color: #22d3ee;
   text-decoration: none;
   pointer-events: auto;
+  text-align: right;
 }
 
 /* —— footer —— */
@@ -310,7 +311,8 @@ img.card-shot {
   }
 
   .go-link {
-    display: inline-block;
+    display: block;
+    text-align: right;
   }
 
   .site-foot {

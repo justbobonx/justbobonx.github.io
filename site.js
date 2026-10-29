@@ -34,7 +34,7 @@ async function loadItems() {
         <h2 class="card-title">${item.name}</h2>
         <div class="card-blurb">
           <p>${item.text}</p>
-          <a class="go-link" href="${item.url}" target="_blank" rel="noopener noreferrer">OPEN →</a>
+          <a class="go-link" href="${item.url}" target="_blank" rel="noopener noreferrer">OPEN ></a>
         </div>
       </div>
     `;
